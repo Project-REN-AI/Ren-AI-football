@@ -148,10 +148,84 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  affected:
+    name: affected services
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.affected.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - id: affected
+        run: |
+          verdict=$(bun scripts/affected-services/main.ts --json "$BASE" "$TARGET")
+          echo "$verdict"
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          TARGET: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+
+  service:
+    name: ${{ matrix.service.name }} / ${{ matrix.category }}
+    needs: [affected]
+    if: ${{ fromJSON(needs.affected.outputs.verdict).services[0] != null }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.affected.outputs.verdict).services }}
+        category: [static, test]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - if: ${{ matrix.service.language != 'typescript' }}
+        run: |
+          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
+          exit 1
+        env:
+          LANGUAGE: ${{ matrix.service.language }}
+
+      - if: ${{ matrix.service.language == 'typescript' }}
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - if: ${{ matrix.service.language == 'typescript' }}
+        run: bun install --frozen-lockfile
+
+      - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'static' }}
+        run: |
+          bun run --cwd "$SERVICE_PATH" format:check
+          bun run --cwd "$SERVICE_PATH" typecheck
+          bun run --cwd "$SERVICE_PATH" lint
+        env:
+          SERVICE_PATH: ${{ matrix.service.path }}
+
+      - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
+        run: bun run --cwd "$SERVICE_PATH" test
+        env:
+          SERVICE_PATH: ${{ matrix.service.path }}
+
   gate:
     name: gate
     if: ${{ always() }}
-    needs: [scripts, monorepo, pr-title, workflows]
+    needs: [scripts, monorepo, pr-title, workflows, affected, service]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

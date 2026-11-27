@@ -17,7 +17,10 @@ interface AffectedService {
   readonly language: string;
 }
 
-type Check = { readonly command: readonly string[]; readonly cwd?: string } | { readonly unsupportedLanguage: string };
+interface Check {
+  readonly command: readonly string[];
+  readonly cwd?: string;
+}
 
 function parseArgs(argv: readonly string[]): { base: string } {
   let base: string | undefined;
@@ -74,23 +77,34 @@ function mavenChecks(path: string): Check[] {
   ];
 }
 
-function serviceChecks({ path, language }: AffectedService): Check[] {
-  if (language === "typescript") return workspaceChecks(path);
-  if (language === "python") return uvChecks(path);
-  if (language === "java") return mavenChecks(path);
-  return [{ unsupportedLanguage: language }];
+function goChecks(path: string): Check[] {
+  return [
+    ["golangci-lint", "fmt", "--diff"],
+    ["golangci-lint", "run"],
+    ["go", "test", "-p", "4", "./..."],
+  ].map((command) => ({ command, cwd: path }));
 }
 
-function describeCheck(check: Check): string {
-  if (!("command" in check)) return `no CI path for ${check.unsupportedLanguage} services yet`;
-  return check.cwd === undefined ? check.command.join(" ") : `(cd ${check.cwd} && ${check.command.join(" ")})`;
+const SERVICE_CHECKS: Readonly<Record<string, (path: string) => Check[]>> = {
+  typescript: workspaceChecks,
+  python: uvChecks,
+  java: mavenChecks,
+  go: goChecks,
+};
+
+function serviceChecks({ path, language }: AffectedService): Check[] {
+  const checks = SERVICE_CHECKS[language];
+  if (checks === undefined) {
+    throw new Error(`no pre-push path for ${language} services; mirror the service job of ci.yml in scripts/pre-push`);
+  }
+  return checks(path);
+}
+
+function describeCheck({ command, cwd }: Check): string {
+  return cwd === undefined ? command.join(" ") : `(cd ${cwd} && ${command.join(" ")})`;
 }
 
 function passes(check: Check): boolean {
-  if (!("command" in check)) {
-    console.error(`${describeCheck(check)}; add its steps to the service job in ci.yml and to scripts/pre-push`);
-    return false;
-  }
   const [program = "", ...args] = check.command;
   console.log(`$ ${describeCheck(check)}`);
   return spawnSync(program, args, { stdio: "inherit", cwd: check.cwd }).status === 0;

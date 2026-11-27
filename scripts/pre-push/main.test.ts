@@ -66,8 +66,10 @@ beforeEach(() => {
   git("config", "user.name", "fixture");
   git("config", "commit.gpgsign", "false");
   write(".git/info/exclude", ".fake-bin/\n");
-  write(".fake-bin/uv", '#!/bin/sh\necho "ran uv $*"\n');
-  chmodSync(join(repo, ".fake-bin/uv"), 0o755);
+  for (const tool of ["uv", "go", "golangci-lint"]) {
+    write(`.fake-bin/${tool}`, `#!/bin/sh\necho "ran ${tool} in $(basename "$PWD") $*"\n`);
+    chmodSync(join(repo, ".fake-bin", tool), 0o755);
+  }
   write("package.json", "{}\n");
   write("compose.yaml", "services: {}\n");
   write(".github/workflows/ci.yml", WORKFLOW);
@@ -127,7 +129,7 @@ describe("pre-push CLI", () => {
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
     for (const command of ["ruff format --check .", "ruff check .", "mypy src tests", "pytest"]) {
-      expect(output).toContain(`ran uv --directory services/scouting run --locked ${command}`);
+      expect(output).toContain(`--directory services/scouting run --locked ${command}`);
     }
     expect(output).not.toContain("lint-imports");
     expect(output).not.toContain("ran web");
@@ -149,16 +151,19 @@ describe("pre-push CLI", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("fails like CI for an affected service whose language has no CI path yet", () => {
+  it("runs the PR checks of an affected Go service with golangci-lint and go test, as CI does", () => {
     const base = commit("base");
     write("services/matching/main.go", "package main\n\nfunc main() {}\n");
     const target = commit("change matching");
 
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
-    expect(exitCode).toBe(1);
-    expect(output).toContain("no CI path for go services yet");
+    expect(output).toContain("ran golangci-lint in matching fmt --diff");
+    expect(output).toContain("ran golangci-lint in matching run");
+    expect(output).toContain("ran go in matching test -p 4 ./...");
+    expect(output).not.toContain("govulncheck");
     expect(output).not.toContain("ran web");
+    expect(exitCode).toBe(0);
   });
 
   it("checks a push of HEAD, which git reports without a local branch ref", () => {
@@ -180,9 +185,9 @@ describe("pre-push CLI", () => {
 
     expect(output).toContain("affected services: catalog, matching, scouting, web");
     expect(output).toContain("ran web test");
-    expect(output).toContain("ran uv --directory services/scouting run --locked pytest");
-    expect(output).toContain("no CI path for go services yet");
-    expect(exitCode).toBe(1);
+    expect(output).toContain("--directory services/scouting run --locked pytest");
+    expect(output).toContain("ran go in matching test -p 4 ./...");
+    expect(exitCode).toBe(0);
   });
 
   it("runs check-comments on the lines the push adds", () => {

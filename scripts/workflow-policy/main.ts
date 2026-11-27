@@ -31,6 +31,25 @@ function triggerViolations(workflow: Mapping): string[] {
   );
 }
 
+const MINUTE_OFF_THE_TURN = /^0*[1-9]$|^[1-5][0-9]$/;
+
+function schedulesOf(on: unknown): unknown[] {
+  if (!isMapping(on) || !Array.isArray(on.schedule)) return [];
+  return on.schedule.map((entry: unknown) => (isMapping(entry) ? entry.cron : undefined));
+}
+
+function scheduleViolations(workflow: Mapping): string[] {
+  return schedulesOf(workflow.on)
+    .filter((cron) => {
+      const minutes = typeof cron === "string" ? (cron.trim().split(/\s+/)[0] ?? "") : "";
+      return !minutes.split(",").every((minute) => MINUTE_OFF_THE_TURN.test(minute));
+    })
+    .map(
+      (cron) =>
+        `schedule "${String(cron)}" must list minutes from 1 to 59; write literal minutes off the turn of the hour, where GitHub delays and drops scheduled runs`,
+    );
+}
+
 function isReadOnly(grant: unknown): boolean {
   return READ_ONLY_GRANTS.some((readOnly) => readOnly === grant);
 }
@@ -53,7 +72,9 @@ function audit(file: string, source: string): Violation[] {
     return [{ file, reason: `invalid YAML: ${error instanceof Error ? error.message : String(error)}` }];
   }
   if (!isMapping(workflow)) return [{ file, reason: "not a workflow mapping" }];
-  return [...triggerViolations(workflow), ...permissionViolations(workflow)].map((reason) => ({ file, reason }));
+  return [...triggerViolations(workflow), ...scheduleViolations(workflow), ...permissionViolations(workflow)].map(
+    (reason) => ({ file, reason }),
+  );
 }
 
 function fail(lines: readonly string[]): never {

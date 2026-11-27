@@ -10,6 +10,7 @@
     "typecheck": "bun check",
     "lint": "oxlint --type-aware --deny-warnings",
     "doctor": "react-doctor . --scope changed --base develop --blocking error --no-score --no-telemetry --no-supply-chain",
+    "doctor:full": "react-doctor . --scope full --blocking error --no-score --no-telemetry --no-supply-chain",
     "test": "vitest run"
   },
   "dependencies": {

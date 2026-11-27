@@ -1,0 +1,323 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+name: nightly
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  targets:
+    name: targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - id: targets
+        run: |
+          targets=$(bun scripts/affected-services/main.ts --json --all HEAD | jq -c '.services + [
+            {name: "scripts", path: "scripts", language: "typescript"},
+            {name: "repository", path: ".", language: "repository"}
+          ]')
+          echo "$targets"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  nightly:
+    name: ${{ matrix.target.name }}
+    needs: [targets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    environment: ci-bot
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    env:
+      TARGET: ${{ matrix.target.name }}
+      TARGET_PATH: ${{ matrix.target.path }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - if: ${{ !contains(fromJSON('["typescript", "python", "java", "go", "repository"]'), matrix.target.language) }}
+        run: |
+          echo "no nightly path for $LANGUAGE yet; add its steps to nightly.yml"
+          exit 1
+        env:
+          LANGUAGE: ${{ matrix.target.language }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - name: Add the C4 check runner
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          cat > "$bin/c4" <<'EOF'
+          #!/bin/sh
+          exec bun scripts/hunt/main.ts --result "$RESULT" --layer C4 --sha "$GITHUB_SHA" --run-url "$RUN_URL" \
+            --service "$TARGET" "$@"
+          EOF
+          chmod +x "$bin/c4"
+          echo "$bin" >> "$GITHUB_PATH"
+          echo "RESULT=$RUNNER_TEMP/run-result.json" >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.target.language == 'typescript' || matrix.target.language == 'repository' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - if: ${{ matrix.target.language == 'typescript' || matrix.target.language == 'repository' }}
+        run: bun install --frozen-lockfile
+
+      - if: ${{ matrix.target.language == 'typescript' }}
+        name: static (format, typecheck, lint)
+        run: |
+          c4 --check format --kind static -- "bun run --cwd $TARGET_PATH format:check"
+          c4 --check typecheck --kind static -- "bun run --cwd $TARGET_PATH typecheck"
+          c4 --check lint --kind static -- "bun run --cwd $TARGET_PATH lint"
+
+      - if: ${{ matrix.target.language == 'typescript' }}
+        name: React Doctor (full scope)
+        run: c4 --check react-doctor --kind static -- "bun run --cwd $TARGET_PATH --if-present doctor:full"
+
+      - if: ${{ matrix.target.language == 'typescript' }}
+        name: unit (isolated)
+        run: c4 --check unit --kind test -- "bun run --cwd $TARGET_PATH test --isolate"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: Install Go, golangci-lint, go-arch-lint and govulncheck
+        env:
+          GO_VERSION: 1.27.4
+          GO_SHA256: 7ecd542f86ccbbb5017de33ac529872bc48c71f4edb658d63a18d2206f482b9b
+          GOLANGCI_LINT_VERSION: v2.15.0
+          GO_ARCH_LINT_VERSION: v1.19.2
+          GOVULNCHECK_VERSION: v1.10.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/go.zip" \
+            "https://proxy.golang.org/golang.org/toolchain/@v/v0.0.1-go${GO_VERSION}.linux-amd64.zip"
+          echo "${GO_SHA256}  $RUNNER_TEMP/go.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/go.zip" -d "$RUNNER_TEMP/go"
+          export PATH="$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin:$RUNNER_TEMP/gobin:$PATH"
+          export GOTOOLCHAIN=local GOBIN="$RUNNER_TEMP/gobin"
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+          go install "github.com/fe3dback/go-arch-lint@${GO_ARCH_LINT_VERSION}"
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          {
+            echo "$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin"
+            echo "$RUNNER_TEMP/gobin"
+          } >> "$GITHUB_PATH"
+          {
+            echo "GOTOOLCHAIN=local"
+            echo "GOBIN=$RUNNER_TEMP/gobin"
+          } >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        run: go -C "$TARGET_PATH" mod download
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: static (format, lint)
+        run: |
+          c4 --check format --kind static -- "cd $TARGET_PATH && golangci-lint fmt --diff"
+          c4 --check lint --kind static -- "cd $TARGET_PATH && golangci-lint run"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: unit, integration and architecture
+        run: |
+          c4 --check unit --kind test -- "go -C $TARGET_PATH test -p 4 ./..."
+          c4 --check integration --kind test -- "go -C $TARGET_PATH test -p 4 -tags integration -run Container ./cmd/..."
+          c4 --check architecture --kind architecture -- "cd $TARGET_PATH && go-arch-lint check"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: govulncheck (full)
+        run: c4 --check govulncheck --kind vulnerability --fails-on 3 -- "govulncheck -C $TARGET_PATH ./..."
+
+      - if: ${{ matrix.target.language == 'python' }}
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+          cache-local-path: ${{ runner.temp }}/uv-cache
+
+      - if: ${{ matrix.target.language == 'python' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+
+      - if: ${{ matrix.target.language == 'python' }}
+        run: uv sync --directory "$TARGET_PATH" --locked
+
+      - if: ${{ matrix.target.language == 'python' }}
+        name: static (format, lint, typecheck)
+        run: |
+          c4 --check format --kind static -- "uv run --directory $TARGET_PATH --locked ruff format --check ."
+          c4 --check lint --kind static -- "uv run --directory $TARGET_PATH --locked ruff check ."
+          c4 --check typecheck --kind static -- "uv run --directory $TARGET_PATH --locked mypy src tests"
+
+      - if: ${{ matrix.target.language == 'python' }}
+        name: unit, integration and architecture
+        run: |
+          c4 --check unit --kind test -- "uv run --directory $TARGET_PATH --locked pytest"
+          c4 --check integration --kind test -- "uv run --directory $TARGET_PATH --locked pytest -n 0 -m integration"
+          c4 --check architecture --kind architecture -- "uv run --directory $TARGET_PATH --locked lint-imports"
+
+      - if: ${{ matrix.target.language == 'java' }}
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - if: ${{ matrix.target.language == 'java' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/.mvn/wrapper/maven-wrapper.properties') }}
+
+      - if: ${{ matrix.target.language == 'java' }}
+        name: Resolve Maven dependencies and test plugins
+        run: |
+          "$TARGET_PATH/mvnw" -f "$TARGET_PATH/pom.xml" --batch-mode --no-transfer-progress test \
+            -Dtest=NoTestSelected -Dsurefire.failIfNoSpecifiedTests=false
+
+      - if: ${{ matrix.target.language == 'java' }}
+        name: static (format, compile, Checkstyle, PMD)
+        run: |
+          c4 --check static --kind static -- \
+            "$TARGET_PATH/mvnw -f $TARGET_PATH/pom.xml --batch-mode --no-transfer-progress spotless:check test-compile checkstyle:check pmd:check"
+
+      - if: ${{ matrix.target.language == 'java' }}
+        name: unit, integration and architecture
+        run: |
+          mvn="$TARGET_PATH/mvnw -f $TARGET_PATH/pom.xml --batch-mode --no-transfer-progress test"
+          c4 --check unit --kind test -- "$mvn -DexcludedGroups=architecture,integration"
+          c4 --check integration --kind test -- "$mvn -Dgroups=integration"
+          c4 --check architecture --kind architecture -- "$mvn -Dgroups=architecture"
+
+      - if: ${{ hashFiles(format('{0}/Dockerfile', matrix.target.path)) != '' }}
+        name: image build
+        run: c4 --check image --kind build -- "docker build --file $TARGET_PATH/Dockerfile --tag scout-$TARGET:nightly ."
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: Install gitleaks, lychee and osv-scanner
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          LYCHEE_VERSION: 0.24.2
+          LYCHEE_SHA256: 1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
+          OSV_SCANNER_VERSION: 2.7.1
+          OSV_SCANNER_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$bin" gitleaks
+          curl -fsSL -o "$RUNNER_TEMP/lychee.tar.gz" \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${LYCHEE_SHA256}  $RUNNER_TEMP/lychee.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/lychee.tar.gz" -C "$bin" --strip-components=1 lychee-x86_64-unknown-linux-gnu/lychee
+          curl -fsSL -o "$bin/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $bin/osv-scanner" | sha256sum -c -
+          chmod +x "$bin/osv-scanner"
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: check-comments (whole repository), gitleaks (history) and hygiene
+        run: |
+          c4 --check check-comments --kind comment -- "bun scripts/check-comments/main.ts --all"
+          c4 --check gitleaks --kind secret -- "gitleaks git --no-banner --redact ."
+          c4 --check typos --kind static --fails-on 2 -- "uvx typos==1.52.2"
+          c4 --check knip --kind static -- "bun run knip"
+          c4 --check compose --kind static -- "docker compose config --quiet && bun scripts/compose-budget/main.ts ."
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: workflows (policy, actionlint, zizmor)
+        run: |
+          c4 --check workflow-policy --kind static -- "bun scripts/workflow-policy/main.ts .github/workflows"
+          c4 --check actionlint --kind static -- "uvx --from actionlint-py==1.7.12.25 actionlint"
+          c4 --check zizmor --kind static --fails-on 11,12,13,14 -- "uvx zizmor==1.33.1 --offline ."
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: osv-scanner (full)
+        run: |
+          c4 --check osv-scanner --kind vulnerability -- \
+            "osv-scanner scan source --recursive --allow-no-lockfiles $TARGET_PATH"
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lycheecache
+          key: lychee-${{ github.run_id }}
+          restore-keys: lychee-
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: lychee (external links, cached)
+        run: |
+          c4 --check lychee --kind link --fails-on 2 -- \
+            "lychee --no-progress --cache --max-cache-age 1d --cache-exclude-status '400..=599' --accept '200..=299,429' './**/*.md'"
+
+      - id: findings
+        name: Count findings
+        run: |
+          count=0
+          if [ -f "$RESULT" ]; then count=$(jq '.failures | length' "$RESULT"); fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - if: ${{ steps.findings.outputs.count != '0' }}
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.CI_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+
+      - if: ${{ steps.findings.outputs.count != '0' }}
+        name: Report findings as issues
+        run: bun scripts/failure-reporter/main.ts "$RESULT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}

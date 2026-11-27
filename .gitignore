@@ -48,6 +48,9 @@ coverage/
 *.test
 *.out
 
+# lychee: cache de links da C4
+.lycheecache
+
 # Dados e artefatos de ML (nunca versionados; ficam no MinIO/S3 ou no MLflow)
 data/
 mlruns/

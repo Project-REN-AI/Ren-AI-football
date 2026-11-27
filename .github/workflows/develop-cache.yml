@@ -12,6 +12,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  services:
+    name: services
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      verdict: ${{ steps.services.outputs.verdict }}
+      images: ${{ steps.services.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - id: services
+        run: |
+          verdict=$(bun scripts/affected-services/main.ts --json --all HEAD)
+          images=$(jq -c '.services[] | {name, path}' <<< "$verdict" | while read -r service; do
+            if [ -f "$(jq -r .path <<< "$service")/Dockerfile" ]; then echo "$service"; fi
+          done | jq -cs .)
+          echo "$verdict"
+          echo "images: $images"
+          {
+            echo "verdict=$verdict"
+            echo "images=$images"
+          } >> "$GITHUB_OUTPUT"
+
   bun:
     name: bun
     runs-on: ubuntu-latest
@@ -40,6 +71,7 @@ jobs:
 
   maven:
     name: maven
+    needs: [services]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -65,14 +97,16 @@ jobs:
           java-version: "25"
 
       - if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        env:
+          VERDICT: ${{ needs.services.outputs.verdict }}
         run: |
-          for manifest in web/service.json services/*/service.json; do
-            [ "$(jq -r .language "$manifest")" = java ] || continue
-            (cd "$(dirname "$manifest")" && ./mvnw --batch-mode --no-transfer-progress dependency:go-offline spotless:check test-compile)
+          jq -r '.services[] | select(.language == "java") | .path' <<< "$VERDICT" | while read -r path; do
+            (cd "$path" && ./mvnw --batch-mode --no-transfer-progress dependency:go-offline test-compile)
           done
 
   uv:
     name: uv
+    needs: [services]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -97,16 +131,18 @@ jobs:
           cache-local-path: ${{ runner.temp }}/uv-cache
 
       - if: ${{ steps.cache.outputs.cache-hit != 'true' }}
+        env:
+          VERDICT: ${{ needs.services.outputs.verdict }}
         run: |
           [ "$(uv cache dir)" = "$RUNNER_TEMP/uv-cache" ] || { echo "uv cache dir is $(uv cache dir), not $RUNNER_TEMP/uv-cache" >&2; exit 1; }
-          for manifest in web/service.json services/*/service.json; do
-            [ "$(jq -r .language "$manifest")" = python ] || continue
-            uv sync --locked --directory "$(dirname "$manifest")"
+          jq -r '.services[] | select(.language == "python") | .path' <<< "$VERDICT" | while read -r path; do
+            uv sync --locked --directory "$path"
           done
           uv cache prune --ci
 
   go:
     name: go
+    needs: [services]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -136,6 +172,7 @@ jobs:
           echo "${GO_SHA256}  $RUNNER_TEMP/go.zip" | sha256sum -c -
           unzip -q "$RUNNER_TEMP/go.zip" -d "$RUNNER_TEMP/go"
           echo "$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/gobin" >> "$GITHUB_PATH"
           {
             echo "GOTOOLCHAIN=local"
             echo "GOBIN=$RUNNER_TEMP/gobin"
@@ -147,46 +184,21 @@ jobs:
           GOLANGCI_LINT_VERSION: v2.15.0
           GOVULNCHECK_VERSION: v1.10.0
           GO_ARCH_LINT_VERSION: v1.19.2
+          VERDICT: ${{ needs.services.outputs.verdict }}
         run: |
           go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
           go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
           go install "github.com/fe3dback/go-arch-lint@${GO_ARCH_LINT_VERSION}"
-          for manifest in web/service.json services/*/service.json; do
-            [ "$(jq -r .language "$manifest")" = go ] || continue
-            directory=$(dirname "$manifest")
-            go -C "$directory" mod download
-            go -C "$directory" build ./...
-            go -C "$directory" test -run '^$' ./...
+          jq -r '.services[] | select(.language == "go") | .path' <<< "$VERDICT" | while read -r path; do
+            go -C "$path" mod download
+            go -C "$path" build ./...
+            go -C "$path" test -c -o "$RUNNER_TEMP/go-test-binaries/" ./...
           done
-
-  images-list:
-    name: images list
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    outputs:
-      services: ${{ steps.list.outputs.services }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - id: list
-        run: |
-          services=$(for manifest in web/service.json services/*/service.json; do
-            directory=$(dirname "$manifest")
-            if [ -f "$directory/Dockerfile" ]; then
-              jq -cn --arg path "$directory" '{name: ($path | split("/") | last), path: $path}'
-            fi
-          done | jq -cs .)
-          echo "$services"
-          echo "services=$services" >> "$GITHUB_OUTPUT"
 
   images:
     name: image / ${{ matrix.service.name }}
-    needs: [images-list]
-    if: ${{ needs.images-list.outputs.services != '[]' }}
+    needs: [services]
+    if: ${{ needs.services.outputs.images != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -194,7 +206,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: ${{ fromJSON(needs.images-list.outputs.services) }}
+        service: ${{ fromJSON(needs.services.outputs.images) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -208,4 +220,4 @@ jobs:
           file: ${{ matrix.service.path }}/Dockerfile
           push: false
           cache-from: type=gha,scope=image-${{ matrix.service.name }}
-          cache-to: type=gha,scope=image-${{ matrix.service.name }},mode=max
+          cache-to: type=gha,scope=image-${{ matrix.service.name }}

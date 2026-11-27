@@ -311,7 +311,9 @@ jobs:
 
       - if: ${{ matrix.service.language == 'python' }}
         working-directory: ${{ matrix.service.path }}
-        run: uv sync --locked
+        run: |
+          [ "$(uv cache dir)" = "$RUNNER_TEMP/uv-cache" ] || { echo "uv cache dir is $(uv cache dir), not $RUNNER_TEMP/uv-cache" >&2; exit 1; }
+          uv sync --locked
 
       - if: ${{ matrix.service.language == 'python' && matrix.category == 'static' }}
         working-directory: ${{ matrix.service.path }}

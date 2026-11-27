@@ -213,6 +213,31 @@ describe("affected services CLI", () => {
     expect(output).toContain("services/ingestion/service.json is not valid JSON");
   });
 
+  it("lists every service of the target with --all, for jobs that cover the whole monorepo", () => {
+    const target = commit("base");
+
+    const { exitCode, stdout } = runAffectedServices("--json", "--all", target);
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      all: true,
+      services: [
+        { name: "catalog", path: "services/catalog", language: "java" },
+        { name: "scouting", path: "services/scouting", language: "python" },
+        { name: "web", path: "web", language: "typescript" },
+      ],
+    });
+  });
+
+  it("fails with --all and more than the target ref", () => {
+    const target = commit("base");
+
+    const { exitCode, output } = runAffectedServices("--all", target, target);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("usage");
+  });
+
   it("fails without a base and a target ref", () => {
     commit("base");
 

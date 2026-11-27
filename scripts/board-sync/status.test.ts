@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
 import { desiredStatus, type IssueSnapshot } from "./status";
 
 const openReadyIssue: IssueSnapshot = {
@@ -13,7 +13,9 @@ const openReadyIssue: IssueSnapshot = {
 
 describe("desiredStatus", () => {
   it("puts a closed issue in Done whatever else is true", () => {
-    expect(desiredStatus({ ...openReadyIssue, closed: true, assigneeCount: 1, openClosingPullRequestCount: 1 })).toBe("Done");
+    expect(desiredStatus({ ...openReadyIssue, closed: true, assigneeCount: 1, openClosingPullRequestCount: 1 })).toBe(
+      "Done",
+    );
   });
 
   it("puts an issue with an open closing pull request in In review", () => {

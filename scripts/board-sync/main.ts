@@ -34,7 +34,8 @@ function readEnv(): Env {
     return value;
   };
   const projectNumber = Number(required("PROJECT_NUMBER"));
-  if (!Number.isInteger(projectNumber) || projectNumber <= 0) throw new Error("PROJECT_NUMBER must be a positive integer");
+  if (!Number.isInteger(projectNumber) || projectNumber <= 0)
+    throw new Error("PROJECT_NUMBER must be a positive integer");
   return {
     token: required("GH_TOKEN"),
     projectOwner: required("PROJECT_OWNER"),

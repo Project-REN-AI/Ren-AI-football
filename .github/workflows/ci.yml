@@ -54,6 +54,9 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - name: check-comments (added lines)
+        run: bun scripts/check-comments/main.ts --base "$BASE_SHA"
+
       - name: Install gitleaks and osv-scanner
         env:
           GITLEAKS_VERSION: 8.30.1

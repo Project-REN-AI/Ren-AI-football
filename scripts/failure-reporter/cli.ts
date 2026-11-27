@@ -136,7 +136,7 @@ function occurrenceDetails({ run, failure, failingOutput }: Occurrence): string[
     "",
     "## Reproduzir",
     "",
-    codeBlock(`${SEED_VARIABLE}=${failure.seed} ${failure.reproduce}`, "sh"),
+    codeBlock(`export ${SEED_VARIABLE}=${failure.seed}\n${failure.reproduce}`, "sh"),
     "",
     "## Saída",
     "",

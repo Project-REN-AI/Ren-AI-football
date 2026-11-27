@@ -110,7 +110,9 @@ describe("failure reporter CLI", () => {
     expect(body).toContain(`**SHA:** \`${RUN.sha}\``);
     expect(body).toContain(`**Execução:** ${RUN.runUrl}`);
     expect(body).toContain("**Seed:** `1337`");
-    expect(body).toContain("SCOUT_TEST_SEED=1337 echo first line; seq 1 5000; echo last line; exit 1");
+    expect(body).toContain(
+      "```sh\nexport SCOUT_TEST_SEED=1337\necho first line; seq 1 5000; echo last line; exit 1\n```",
+    );
     expect(body).toContain("last line");
     expect(body).not.toContain("first line\n");
     expect(body.length).toBeLessThan(12_000);

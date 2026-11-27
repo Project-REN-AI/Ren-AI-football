@@ -1,0 +1,61 @@
+# Segredos e configuração local
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Claude Code: configuração local da máquina
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Sistema operacional e editores
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Java / Maven / Gradle
+target/
+build/
+.gradle/
+*.class
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+dist/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# Go
+/bin/
+*.test
+*.out
+
+# Dados e artefatos de ML (nunca versionados; ficam no MinIO/S3 ou no MLflow)
+data/
+mlruns/
+*.parquet
+*.onnx
+*.joblib
+*.pkl
+
+# TLA+ (estados gerados pelo TLC)
+states/
+*.tlc_out

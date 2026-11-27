@@ -1,34 +1,52 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const repository = fileURLToPath(new URL("../..", import.meta.url));
+const fixtures: string[] = [];
 
-function mirrorOfRepository(planted: Record<string, string>): string {
-  const mirror = mkdtempSync(join(tmpdir(), "knip-"));
-  const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
-    cwd: repository,
-    encoding: "utf8",
-  })
-    .split("\0")
-    .filter((file) => file !== "" && existsSync(join(repository, file)));
-  for (const file of files) {
-    mkdirSync(dirname(join(mirror, file)), { recursive: true });
-    cpSync(join(repository, file), join(mirror, file));
+afterEach(() => {
+  for (const fixture of fixtures.splice(0)) rmSync(fixture, { recursive: true, force: true });
+});
+
+const rootManifest: { scripts: Record<string, string>; devDependencies: Record<string, string> } = JSON.parse(
+  readFileSync(join(repository, "package.json"), "utf8"),
+);
+
+function rootScript(name: string): string {
+  const script = rootManifest.scripts[name];
+  if (script === undefined) throw new Error(`package.json has no "${name}" script`);
+  return script;
+}
+
+function bunWorkspaces(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "knip-"));
+  fixtures.push(root);
+  const tree: Record<string, string> = {
+    "package.json": JSON.stringify({
+      name: "fixture",
+      private: true,
+      workspaces: ["app"],
+      scripts: { knip: rootScript("knip") },
+      devDependencies: { knip: rootManifest.devDependencies["knip"] },
+    }),
+    "app/package.json": JSON.stringify({ name: "app", private: true, type: "module" }),
+    "app/src/index.ts": 'import { kickoff } from "./match";\n\nconsole.log(kickoff);\n',
+    "app/src/match.ts": "export const kickoff = 0;\n",
+    ...files,
+  };
+  for (const [path, source] of Object.entries(tree)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), source);
   }
-  for (const workspace of [".", "scripts", "web"]) {
-    symlinkSync(join(repository, workspace, "node_modules"), join(mirror, workspace, "node_modules"));
-  }
-  for (const [file, source] of Object.entries(planted)) {
-    mkdirSync(dirname(join(mirror, file)), { recursive: true });
-    writeFileSync(join(mirror, file), source);
-  }
-  return mirror;
+  copyFileSync(join(repository, "knip.json"), join(root, "knip.json"));
+  symlinkSync(join(repository, "node_modules"), join(root, "node_modules"));
+  return root;
 }
 
 function knip(root: string): { status: number | null; output: string } {
@@ -37,27 +55,36 @@ function knip(root: string): { status: number | null; output: string } {
 }
 
 describe("knip script", () => {
-  it("passes the Bun workspaces as they are", () => {
-    expect(knip(mirrorOfRepository({})).status).toBe(0);
+  it("passes Bun workspaces with no dead code", () => {
+    expect(knip(bunWorkspaces({})).status).toBe(0);
   }, 60_000);
 
   it("fails on a file no workspace imports", () => {
-    const result = knip(mirrorOfRepository({ "web/src/domain/orphan.ts": "export const orphan = 1;\n" }));
+    const result = knip(bunWorkspaces({ "app/src/orphan.ts": "export const orphan = 1;\n" }));
 
     expect(result.status).not.toBe(0);
-    expect(result.output).toContain("web/src/domain/orphan.ts");
+    expect(result.output).toContain("app/src/orphan.ts");
   }, 60_000);
 
   it("fails on an export nothing uses", () => {
     const result = knip(
-      mirrorOfRepository({
-        "scripts/pr-title/limits.ts": "export const maxLength = 72;\nexport const minLength = 10;\n",
-        "scripts/pr-title/limits.test.ts":
-          'import { expect, it } from "vitest";\nimport { maxLength } from "./limits";\n\nit("caps", () => expect(maxLength).toBe(72));\n',
-      }),
+      bunWorkspaces({ "app/src/match.ts": "export const kickoff = 0;\nexport const fullTime = 90;\n" }),
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.output).toContain("minLength");
+    expect(result.output).toContain("fullTime");
+  }, 60_000);
+
+  it("accepts an exported type used only by its own module's exports", () => {
+    const result = knip(
+      bunWorkspaces({
+        "app/src/match.ts":
+          "export interface Side {\n  name: string;\n}\nexport interface Fixture extends Side {\n  away: Side;\n}\nexport const kickoff = 0;\n",
+        "app/src/index.ts":
+          'import { kickoff, type Fixture } from "./match";\n\nconst fixture: Fixture = { name: "a", away: { name: "b" } };\nconsole.log(kickoff, fixture);\n',
+      }),
+    );
+
+    expect(result.status).toBe(0);
   }, 60_000);
 });

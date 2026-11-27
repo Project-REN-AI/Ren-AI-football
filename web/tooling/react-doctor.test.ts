@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const web = fileURLToPath(new URL("..", import.meta.url));
+const fixtures: string[] = [];
+
+afterEach(() => {
+  for (const fixture of fixtures.splice(0)) rmSync(fixture, { recursive: true, force: true });
+});
 
 function webScript(name: string): string {
   const manifest: { scripts: Record<string, string> } = JSON.parse(readFileSync(join(web, "package.json"), "utf8"));
@@ -29,8 +34,17 @@ function commitAll(root: string, message: string): void {
   execFileSync("git", [...identity, "commit", "--quiet", "--message", message], { cwd: root });
 }
 
-function featureBranch(onDevelop: Record<string, string>, onFeature: Record<string, string>): string {
+interface FeatureBranchOptions {
+  readonly withConfig?: boolean;
+}
+
+function featureBranch(
+  onDevelop: Record<string, string>,
+  onFeature: Record<string, string>,
+  { withConfig = true }: FeatureBranchOptions = {},
+): string {
   const root = mkdtempSync(join(tmpdir(), "react-doctor-"));
+  fixtures.push(root);
   writeFiles(root, {
     "package.json": JSON.stringify({
       name: "fixture",
@@ -41,7 +55,7 @@ function featureBranch(onDevelop: Record<string, string>, onFeature: Record<stri
     "src/home.tsx": "export function Home() {\n  return <p>Scout</p>;\n}\n",
     ...onDevelop,
   });
-  copyFileSync(join(web, "doctor.config.json"), join(root, "doctor.config.json"));
+  if (withConfig) copyFileSync(join(web, "doctor.config.json"), join(root, "doctor.config.json"));
   execFileSync("git", ["init", "--quiet", "--initial-branch", "develop"], { cwd: root });
   commitAll(root, "develop");
   execFileSync("git", ["switch", "--quiet", "--create", "feature"], { cwd: root });
@@ -50,9 +64,13 @@ function featureBranch(onDevelop: Record<string, string>, onFeature: Record<stri
   return root;
 }
 
-function doctor(root: string): { status: number | null; output: string } {
+function doctor(root: string, ...args: string[]): { status: number | null; output: string } {
   const path = [join(web, "node_modules", ".bin"), process.env["PATH"] ?? ""].join(delimiter);
-  const run = spawnSync("bun", ["run", "doctor"], { cwd: root, encoding: "utf8", env: { ...process.env, PATH: path } });
+  const run = spawnSync("bun", ["run", "doctor", ...args], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: path },
+  });
   return { status: run.status, output: run.stdout + run.stderr };
 }
 
@@ -65,6 +83,8 @@ export function Clock() {
   return <p>clock</p>;
 }
 `;
+
+const missingKey = "export function List() {\n  return <ul>{[1, 2].map((n) => <li>{n}</li>)}</ul>;\n}\n";
 
 describe("web doctor script", () => {
   it("fails on a React Doctor error introduced by the branch", () => {
@@ -83,10 +103,22 @@ describe("web doctor script", () => {
   }, 60_000);
 
   it("leaves rules ported from Oxlint to Oxlint", () => {
-    const missingKey = "export function List() {\n  return <ul>{[1, 2].map((n) => <li>{n}</li>)}</ul>;\n}\n";
-    const root = featureBranch({}, { "src/list.tsx": missingKey });
+    const withConfig = featureBranch({}, { "src/list.tsx": missingKey });
+    const withoutConfig = featureBranch({}, { "src/list.tsx": missingKey }, { withConfig: false });
 
-    expect(doctor(root).status).toBe(0);
+    expect(doctor(withConfig).status).toBe(0);
+    expect(doctor(withoutConfig).output).toContain("react-doctor/jsx-key");
+  }, 60_000);
+
+  it("takes the base commit CI passes when there is no local develop branch", () => {
+    const root = featureBranch({}, { "src/clock.tsx": leakyEffect });
+    const base = execFileSync("git", ["rev-parse", "develop"], { cwd: root, encoding: "utf8" }).trim();
+    execFileSync("git", ["branch", "--quiet", "--delete", "--force", "develop"], { cwd: root });
+
+    const result = doctor(root, "--base", base);
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("react-doctor/effect-needs-cleanup");
   }, 60_000);
 
   it("ignores issues that already exist on develop", () => {

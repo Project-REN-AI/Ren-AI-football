@@ -9,6 +9,7 @@
     "format:check": "bun fmt --check .",
     "typecheck": "bun check",
     "lint": "oxlint --type-aware --deny-warnings",
+    "doctor": "react-doctor . --scope changed --base develop --blocking error --no-score --no-telemetry --no-supply-chain",
     "test": "vitest run"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
     "oxc-parser": "0.160.0",
     "oxlint": "1.95.0",
     "oxlint-tsgolint": "7.0.2009",
+    "react-doctor": "0.9.23",
     "typescript": "7.0.2",
     "vitest": "5.1.2"
   }

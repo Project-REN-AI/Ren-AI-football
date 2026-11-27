@@ -107,6 +107,10 @@ jobs:
       - run: docker compose config --quiet
       - run: bun scripts/compose-budget/main.ts .
 
+      - run: bun install --frozen-lockfile
+
+      - run: bun run knip
+
   pr-title:
     name: pr-title
     if: ${{ github.event_name == 'pull_request' }}
@@ -229,6 +233,12 @@ jobs:
           bun run --cwd "$SERVICE_PATH" format:check
           bun run --cwd "$SERVICE_PATH" typecheck
           bun run --cwd "$SERVICE_PATH" lint
+
+      - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'static' }}
+        name: React Doctor (changed against the base)
+        run: bun run --cwd "$SERVICE_PATH" --if-present doctor --base "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
 
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
         run: bun run --cwd "$SERVICE_PATH" test

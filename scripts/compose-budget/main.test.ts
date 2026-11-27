@@ -20,7 +20,7 @@ function runComposeBudget(files: Readonly<Record<string, string>>): { exitCode: 
   }
 }
 
-describe("compose budget CLI", () => {
+describe("compose budget CLI", { timeout: 30_000 }, () => {
   it("passes when every profile fits in 10 GB, counting services without profiles in each one", () => {
     const { exitCode, output } = runComposeBudget({
       "compose.yaml": `

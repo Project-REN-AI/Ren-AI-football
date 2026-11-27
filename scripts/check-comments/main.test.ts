@@ -15,7 +15,7 @@ const SPDX = {
   py: "# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0",
 } as const;
 
-type Language = keyof typeof SPDX;
+type Extension = keyof typeof SPDX;
 
 const repos: string[] = [];
 
@@ -56,7 +56,7 @@ function checkComments(repo: string, ...args: string[]): { exitCode: number | nu
   return { exitCode: result.status, output: result.stdout + result.stderr };
 }
 
-function addedFile(language: Language, body: readonly string[]): { repo: string; base: string } {
+function addedFile(language: Extension, body: readonly string[]): { repo: string; base: string } {
   const repo = createRepo();
   const base = git(repo, "rev-parse", "HEAD");
   write(repo, `src/sample.${language}`, [SPDX[language], ...body]);
@@ -76,14 +76,14 @@ describe("check-comments on lines added between two refs", () => {
     expect(output).toContain("ADR");
   });
 
-  const LINE_COMMENT: Record<Language, string> = { ts: "//", java: "//", go: "//", py: "#" };
-  const DECLARATION: Record<Language, string> = {
+  const LINE_COMMENT: Record<Extension, string> = { ts: "//", java: "//", go: "//", py: "#" };
+  const DECLARATION: Record<Extension, string> = {
     ts: "export const answer = 42;",
     java: "public final class Sample {}",
     go: "var Answer = 42",
     py: "ANSWER = 42",
   };
-  const LANGUAGES = Object.keys(SPDX) as Language[];
+  const LANGUAGES = Object.keys(SPDX) as Extension[];
 
   it.each(LANGUAGES)("accepts each allowed comment in %s", (language) => {
     const mark = LINE_COMMENT[language];
@@ -139,16 +139,67 @@ describe("check-comments on lines added between two refs", () => {
     expect(output).toContain("docs/adr/0099-missing.md");
   });
 
-  it("ignores a violation that was already there before the base", () => {
-    const { repo } = addedFile("ts", ["// old narration", DECLARATION.ts]);
+  it.each(LANGUAGES)("ignores a violation that was already there before the base in %s", (language) => {
+    const narration = `${LINE_COMMENT[language]} old narration`;
+    const { repo } = addedFile(language, [narration, DECLARATION[language]]);
     const base = git(repo, "rev-parse", "HEAD");
-    write(repo, "src/sample.ts", [SPDX.ts, "// old narration", DECLARATION.ts, "export const other = 1;"]);
+    write(repo, `src/sample.${language}`, [SPDX[language], narration, DECLARATION[language], DECLARATION[language]]);
     commit(repo);
 
     const { exitCode, output } = checkComments(repo, "--base", base);
 
     expect(output).toContain("check-comments: clean");
     expect(exitCode).toBe(0);
+  });
+
+  it("fails a TODO without an issue that follows an allowed TODO", () => {
+    const { repo, base } = addedFile("ts", ["// TODO(#1): cache the answer", "// FIXME later", DECLARATION.ts]);
+
+    const { exitCode, output } = checkComments(repo, "--base", base);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("TODO(#<issue>)");
+  });
+
+  it("fails a narrating comment above a variable inside a Go function", () => {
+    const { repo, base } = addedFile("go", [
+      "package sample",
+      "",
+      "func Run() {",
+      "\t// count the runs",
+      "\tvar runs = 1",
+      "\t_ = runs",
+      "}",
+    ]);
+
+    const { exitCode, output } = checkComments(repo, "--base", base);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("src/sample.go:5:");
+  });
+
+  it("fails an empty comment in Java", () => {
+    const { repo, base } = addedFile("java", ["//", DECLARATION.java]);
+
+    const { exitCode } = checkComments(repo, "--base", base);
+
+    expect(exitCode).toBe(1);
+  });
+
+  it("fails an SPDX line outside the file header", () => {
+    const { repo, base } = addedFile("ts", [
+      DECLARATION.ts,
+      "export const b = 1;",
+      "export const c = 1;",
+      "export const d = 1;",
+      "export const e = 1;",
+      "// SPDX-License-Identifier: MIT",
+    ]);
+
+    const { exitCode, output } = checkComments(repo, "--base", base);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("src/sample.ts:7:");
   });
 
   it("does not mistake comment markers inside strings for comments", () => {
@@ -165,7 +216,7 @@ describe("check-comments on lines added between two refs", () => {
     expect(exitCode).toBe(0);
   });
 
-  const SUPPRESSION: Record<Language, string> = {
+  const SUPPRESSION: Record<Extension, string> = {
     ts: "// @ts-expect-error",
     java: '@SuppressWarnings("unchecked")',
     go: "//nolint:errcheck",
@@ -278,6 +329,15 @@ describe("check-comments on the whole repository", () => {
 });
 
 describe("check-comments usage", () => {
+  it("fails with an empty base ref", () => {
+    const repo = createRepo();
+
+    const { exitCode, output } = checkComments(repo, "--base", "");
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("usage:");
+  });
+
   it("fails without a mode", () => {
     const repo = createRepo();
 

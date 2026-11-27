@@ -41,16 +41,23 @@ const TODO_WITH_ISSUE = /^TODO\(#\d+\)/;
 const TODO_MARKER = /\b(TODO|FIXME|XXX|HACK)\b/;
 const ADR_POINTER = /^See (docs\/adr\/\d{4}-[a-z0-9-]+\.md)\.?$/;
 const LINK = /https?:\/\/\S+/;
-const DIRECTIVES: Record<Language, RegExp> = {
+const DIRECTIVES: Partial<Record<Language, RegExp>> = {
   typescript: /^\/ <reference |^\/ <amd-/,
-  java: /^$/,
   go: /^go:\w+|^line \S|^\+build |^export \w/,
   python: /^!|^-\*- coding|^(vim?|ex): .*coding[:=]/,
 };
 const GO_DECLARATION = /^(package|func|type|var|const)\b/;
 
+function isDirective(text: string, language: Language): boolean {
+  return DIRECTIVES[language]?.test(text) ?? false;
+}
+
 function isStandalone(comment: Comment, language: Language): boolean {
-  return comment.block || SPDX.test(comment.text) || DIRECTIVES[language].test(comment.text);
+  return comment.block || SPDX.test(comment.text) || isDirective(comment.text, language);
+}
+
+function hasTodoWithoutIssue(text: string): boolean {
+  return text.split("\n").some((line) => TODO_MARKER.test(line) && !TODO_WITH_ISSUE.test(line));
 }
 
 function linesOf({ line, endLine }: Comment): number[] {
@@ -88,7 +95,7 @@ function group(comments: readonly Comment[], language: Language): CommentGroup[]
 
 function isGoDoc(commentGroup: CommentGroup, codeLines: readonly string[]): boolean {
   const next = codeLines[commentGroup.endLine] ?? "";
-  return commentGroup.ownLine && GO_DECLARATION.test(next.trim());
+  return commentGroup.ownLine && GO_DECLARATION.test(next);
 }
 
 function judgeGroup(
@@ -98,14 +105,16 @@ function judgeGroup(
   repository: Repository,
 ): string | undefined {
   const { text } = commentGroup;
-  if (DIRECTIVES[language].test(text) || SPDX.test(text) || TODO_WITH_ISSUE.test(text)) return undefined;
+  if (isDirective(text, language)) return undefined;
+  if (SPDX.test(text) && commentGroup.line <= LICENSE_HEADER_LINES) return undefined;
+  if (hasTodoWithoutIssue(text)) return TODO_WITHOUT_ISSUE;
+  if (TODO_WITH_ISSUE.test(text)) return undefined;
   const pointer = ADR_POINTER.exec(text);
   if (pointer?.[1] !== undefined) {
     return repository.exists(pointer[1])
       ? undefined
       : `ADR pointer to ${pointer[1]}, which does not exist: create the ADR or fix the path`;
   }
-  if (TODO_MARKER.test(text)) return TODO_WITHOUT_ISSUE;
   if (LINK.test(text)) return undefined;
   if (commentGroup.doc || (language === "go" && isGoDoc(commentGroup, codeLines))) return undefined;
   return NARRATION;

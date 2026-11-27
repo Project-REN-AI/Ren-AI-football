@@ -64,8 +64,8 @@ function parseArgs(argv: readonly string[]): { base: string | undefined; head: s
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--all") all = true;
-    else if (arg === "--base" && argv[index + 1] !== undefined) base = argv[(index += 1)];
-    else if (arg === "--head" && argv[index + 1] !== undefined) head = argv[(index += 1)] ?? head;
+    else if (arg === "--base" && argv[index + 1]) base = argv[(index += 1)];
+    else if (arg === "--head" && argv[index + 1]) head = argv[(index += 1)] ?? head;
     else throw new Error(USAGE);
   }
   if (all === (base !== undefined)) throw new Error(USAGE);
@@ -103,7 +103,8 @@ function main(): number {
   try {
     const { base, head } = parseArgs(process.argv.slice(2));
     const paths = trackedPaths(head);
-    const repository: Repository = { exists: (path) => paths.includes(path) };
+    const tracked = new Set(paths);
+    const repository: Repository = { exists: (path) => tracked.has(path) };
     const files =
       base === undefined
         ? paths.map((path): ChangedFile => ({ path, added: true, addedLines: "all" }))

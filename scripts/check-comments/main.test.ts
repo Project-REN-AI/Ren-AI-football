@@ -358,6 +358,25 @@ describe("check-comments on doc comments", () => {
         "    return 42",
       ],
     ],
+    ["ts", ["export class Box<T extends { id: number }> {", "  /** Runs the box. */", "  run(): void {}", "}"]],
+    ["ts", ["export interface Sample {", "  nested: {", "    /** The answer. */", "    answer: number;", "  };", "}"]],
+    ["ts", ["export const api = {", "  /** Gets the answer. */", "  get: () => 42,", "};"]],
+    ["ts", ["/** @packageDocumentation */", "", "export const answer = 42;"]],
+    ["ts", ["/** @type {number} */", "module.exports = 42;"]],
+    [
+      "go",
+      [
+        "package sample",
+        "",
+        "type (",
+        "\t// Sample holds the answer.",
+        "\tSample struct {",
+        "\t\t// Answer is the answer.",
+        "\t\tAnswer int",
+        "\t}",
+        ")",
+      ],
+    ],
   ] as const)("accepts a doc comment above an exported symbol in %s", (language, body) => {
     const { repo, base } = addedFile(language, body);
 
@@ -421,6 +440,22 @@ describe("check-comments on doc comments", () => {
       "py",
       ["class _Sample:", "    def next(self, n: int) -> int:", '        """Add one."""', "        return n + 1"],
       4,
+    ],
+    ["py", ['def _next(n: int) -> int: """Add one."""'], 2],
+    ["ts", ["const config = {", "  /** The answer. */", "  answer: 42,", "};"], 3],
+    [
+      "go",
+      [
+        "package sample",
+        "",
+        "type (",
+        "\tSample struct {",
+        "\t\t// answer is the answer.",
+        "\t\tanswer int",
+        "\t}",
+        ")",
+      ],
+      6,
     ],
   ] as const)("fails a doc comment above a non-exported symbol in %s", (language, body, line) => {
     const { repo, base } = addedFile(language, body);

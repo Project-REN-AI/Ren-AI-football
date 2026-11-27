@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { lex, type Comment, type Language } from "./lexer";
-import { symbolTable, type SymbolTable } from "./symbols";
+import { lineRange, pythonDocstrings, symbolBelow, type SymbolBelow } from "./symbols";
 
 export interface Violation {
   readonly line: number;
@@ -29,10 +29,11 @@ const NARRATION =
   "put the why in an ADR (docs/adr/) or an issue. " +
   "Allowed: SPDX header, doc comment on an exported symbol, external constraint with a link, " +
   "`See docs/adr/NNNN-<slug>.md`, `TODO(#<issue>)`";
-const DOC_ON_PRIVATE_SYMBOL =
+const DOC_NOT_ON_EXPORTED_SYMBOL =
   "doc comment not right above an exported symbol: a doc comment documents the contract of an exported " +
   "(public) symbol only; on anything else rename, extract or change the type so the code says it, " +
   "or put the why in an ADR (docs/adr/) or an issue";
+const FILE_DOC_TAG = /@(packageDocumentation|fileoverview|file|module)\b/;
 const TODO_WITHOUT_ISSUE = "TODO without an issue: open an issue and write `TODO(#<issue>): ...`, or do it now";
 
 const SUPPRESSION_WITHOUT_LINK =
@@ -65,7 +66,7 @@ function hasTodoWithoutIssue(text: string): boolean {
 }
 
 function linesOf({ line, endLine }: Comment): number[] {
-  return Array.from({ length: endLine - line + 1 }, (_, offset) => line + offset);
+  return lineRange(line, endLine);
 }
 
 function group(comments: readonly Comment[], language: Language): CommentGroup[] {
@@ -100,7 +101,7 @@ function group(comments: readonly Comment[], language: Language): CommentGroup[]
 function judgeGroup(
   commentGroup: CommentGroup,
   language: Language,
-  symbols: SymbolTable,
+  below: SymbolBelow,
   repository: Repository,
 ): Violation | undefined {
   const violation = (message: string, lines = commentGroup.lines): Violation => ({
@@ -120,11 +121,12 @@ function judgeGroup(
       : violation(`ADR pointer to ${pointer[1]}, which does not exist: create the ADR or fix the path`);
   }
   if (LINK.test(text)) return undefined;
+  if (commentGroup.doc && language === "typescript" && FILE_DOC_TAG.test(text)) return undefined;
   const isDocComment = commentGroup.doc || (language === "go" && commentGroup.ownLine);
-  const symbol = isDocComment ? symbols.below(commentGroup.endLine) : undefined;
+  const symbol = isDocComment ? below(commentGroup.endLine) : undefined;
   if (symbol?.exported === true) return undefined;
   if (symbol !== undefined || commentGroup.doc) {
-    return violation(DOC_ON_PRIVATE_SYMBOL, [...commentGroup.lines, ...(symbol?.lines ?? [])]);
+    return violation(DOC_NOT_ON_EXPORTED_SYMBOL, [...commentGroup.lines, ...(symbol?.lines ?? [])]);
   }
   return violation(NARRATION);
 }
@@ -161,14 +163,15 @@ export function judgeLicenseHeader(source: string, language: Language): Violatio
 export function judgeSource(source: string, language: Language, repository: Repository): Violation[] {
   const { comments, codeLines } = lex(source, language);
   const { violations, suppressionLines } = judgeSuppressions(comments, codeLines);
-  const symbols = symbolTable(codeLines, language);
+  const below: SymbolBelow = language === "python" ? () => undefined : symbolBelow(codeLines, language);
   const judged = comments.filter(({ line }) => !suppressionLines.has(line));
   for (const commentGroup of group(judged, language)) {
-    const violation = judgeGroup(commentGroup, language, symbols, repository);
+    const violation = judgeGroup(commentGroup, language, below, repository);
     if (violation !== undefined) violations.push(violation);
   }
-  for (const { line, lines, exported } of symbols.docstrings) {
-    if (!exported) violations.push({ line, lines, message: DOC_ON_PRIVATE_SYMBOL });
+  const docstrings = language === "python" ? pythonDocstrings(codeLines) : [];
+  for (const { line, lines, exported } of docstrings) {
+    if (!exported) violations.push({ line, lines, message: DOC_NOT_ON_EXPORTED_SYMBOL });
   }
   return violations;
 }

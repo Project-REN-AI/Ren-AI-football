@@ -198,7 +198,7 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - if: ${{ matrix.service.language != 'typescript' && matrix.service.language != 'go' }}
+      - if: ${{ matrix.service.language != 'typescript' && matrix.service.language != 'python' && matrix.service.language != 'go' }}
         run: |
           echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
           exit 1
@@ -276,6 +276,31 @@ jobs:
         run: |
           go install "github.com/fe3dback/go-arch-lint@${GO_ARCH_LINT_VERSION}"
           go-arch-lint check
+
+      - if: ${{ matrix.service.language == 'python' }}
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+
+      - if: ${{ matrix.service.language == 'python' }}
+        working-directory: ${{ matrix.service.path }}
+        run: uv sync --locked
+
+      - if: ${{ matrix.service.language == 'python' && matrix.category == 'static' }}
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+          uv run --locked mypy src tests
+
+      - if: ${{ matrix.service.language == 'python' && matrix.category == 'test' }}
+        working-directory: ${{ matrix.service.path }}
+        run: uv run --locked pytest
+
+      - if: ${{ matrix.service.language == 'python' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        working-directory: ${{ matrix.service.path }}
+        run: uv run --locked lint-imports
 
   gate:
     name: gate

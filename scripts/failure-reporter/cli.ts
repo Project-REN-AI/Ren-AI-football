@@ -3,70 +3,45 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { type IssueTracker, signatureMarker, type TrackedIssue } from "./issue-tracker";
+import { type FailureSignature, type IssueTracker, signatureMarker, type TrackedIssue } from "./issue-tracker";
 
 const MAX_RERUNS = 3;
 const INFRASTRUCTURE = "infrastructure";
 const SEED_VARIABLE = "SCOUT_TEST_SEED";
 const OUTPUT_TAIL_CHARACTERS = 8_000;
 
-interface Failure {
-  readonly service: string;
-  readonly check: string;
-  readonly kind: string;
-  readonly seed: string;
-  readonly reproduce: string;
-}
-
-interface RunResult {
-  readonly layer: string;
-  readonly sha: string;
-  readonly runUrl: string;
-  readonly failures: readonly Failure[];
-}
-
 const FAILURE_FIELDS = ["service", "check", "kind", "seed", "reproduce"] as const;
 const RUN_FIELDS = ["layer", "sha", "runUrl"] as const;
 
-function requireStrings<const K extends string>(
-  value: unknown,
-  fields: readonly K[],
-  where: string,
-): Record<K, string> & Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${where || "run result"} must be a JSON object`);
-  }
-  const record = value as Record<string, unknown>;
-  for (const field of fields) {
-    if (typeof record[field] !== "string" || record[field] === "") {
-      throw new Error(`${where ? `${where}.` : ""}${field} must be a non-empty string`);
-    }
-  }
-  return record as Record<K, string> & Record<string, unknown>;
-}
+type Failure = Readonly<Record<(typeof FAILURE_FIELDS)[number], string>>;
 
-function parseRunResult(raw: string): RunResult {
-  const run = requireStrings(JSON.parse(raw), RUN_FIELDS, "");
-  if (!Array.isArray(run.failures)) throw new Error("failures must be an array");
-  const failures = run.failures.map((failure: unknown, index) => {
-    const { service, check, kind, seed, reproduce } = requireStrings(failure, FAILURE_FIELDS, `failures[${index}]`);
-    return { service, check, kind, seed, reproduce };
-  });
-  return { layer: run.layer, sha: run.sha, runUrl: run.runUrl, failures };
+interface RunResult extends Readonly<Record<(typeof RUN_FIELDS)[number], string>> {
+  readonly failures: readonly Failure[];
 }
 
 type Classification = "ConfirmedFailure" | "FlakyTest";
 
-const CLASSIFICATIONS: Readonly<
-  Record<Classification, { readonly report: string; readonly title: string; readonly labels: readonly string[] }>
-> = {
-  ConfirmedFailure: { report: "confirmed", title: "Falha Confirmada", labels: ["ci-bot", "bug", "ready-for-agent"] },
-  FlakyTest: { report: "flaky", title: "Teste Instável", labels: ["ci-bot", "flaky", "needs-triage"] },
+interface ClassificationReport {
+  readonly logWord: string;
+  readonly heading: string;
+  readonly labels: readonly string[];
+}
+
+const CLASSIFICATIONS: Readonly<Record<Classification, ClassificationReport>> = {
+  ConfirmedFailure: { logWord: "confirmed", heading: "Falha Confirmada", labels: ["ci-bot", "bug", "ready-for-agent"] },
+  FlakyTest: { logWord: "flaky", heading: "Teste Instável", labels: ["ci-bot", "flaky", "needs-triage"] },
 };
 
 interface Rerun {
   readonly passed: boolean;
   readonly output: string;
+}
+
+interface Occurrence {
+  readonly run: RunResult;
+  readonly failure: Failure;
+  readonly classification: Classification;
+  readonly failingOutput: string;
 }
 
 export interface FailureReporterPorts {
@@ -78,8 +53,38 @@ export interface FailureReporterResult {
   readonly output: string;
 }
 
-function failureSignatureOf({ service, check, kind }: Failure): string {
-  return createHash("sha256").update([service, check, kind].join("\n")).digest("hex").slice(0, 16);
+function requireStrings<const K extends string>(
+  value: unknown,
+  fields: readonly K[],
+  path: (field: string) => string,
+): Record<K, string> & Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${path("")} must be a JSON object`);
+  }
+  const record = value as Record<string, unknown>;
+  for (const field of fields) {
+    if (typeof record[field] !== "string" || record[field] === "") {
+      throw new Error(`${path(field)} must be a non-empty string`);
+    }
+  }
+  return record as Record<K, string> & Record<string, unknown>;
+}
+
+function parseRunResult(raw: string): RunResult {
+  const run = requireStrings(JSON.parse(raw), RUN_FIELDS, (field) => field || "run result");
+  if (!Array.isArray(run.failures)) throw new Error("failures must be an array");
+  const failures = run.failures.map((failure: unknown, index) => {
+    const at = `failures[${index}]`;
+    const { service, check, kind, seed, reproduce } = requireStrings(failure, FAILURE_FIELDS, (field) =>
+      field ? `${at}.${field}` : at,
+    );
+    return { service, check, kind, seed, reproduce };
+  });
+  return { layer: run.layer, sha: run.sha, runUrl: run.runUrl, failures };
+}
+
+function failureSignatureOf({ service, check, kind }: Failure): FailureSignature {
+  return createHash("sha256").update([service, check, kind].join("\n")).digest("hex").slice(0, 16) as FailureSignature;
 }
 
 function rerun({ reproduce, seed }: Failure): Rerun {
@@ -100,6 +105,16 @@ function rerunUntilPass(failure: Failure): Rerun[] {
   return reruns;
 }
 
+function classify(run: RunResult, failure: Failure): Occurrence {
+  const reruns = rerunUntilPass(failure);
+  return {
+    run,
+    failure,
+    classification: reruns.some(({ passed }) => passed) ? "FlakyTest" : "ConfirmedFailure",
+    failingOutput: reruns.findLast(({ passed }) => !passed)?.output ?? "",
+  };
+}
+
 function codeBlock(text: string, language = ""): string {
   const longestBacktickRun = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
@@ -112,7 +127,7 @@ function truncatedOutput(output: string): string {
   return `${note}\n\n${codeBlock(output.slice(-OUTPUT_TAIL_CHARACTERS))}`;
 }
 
-function occurrence(run: RunResult, failure: Failure, reruns: readonly Rerun[]): string[] {
+function occurrenceDetails({ run, failure, failingOutput }: Occurrence): string[] {
   return [
     `- **Camada:** ${run.layer}`,
     `- **SHA:** \`${run.sha}\``,
@@ -125,64 +140,51 @@ function occurrence(run: RunResult, failure: Failure, reruns: readonly Rerun[]):
     "",
     "## Saída",
     "",
-    truncatedOutput(reruns.at(-1)?.output ?? ""),
+    truncatedOutput(failingOutput),
     "",
   ];
 }
 
-function issueBody(
-  run: RunResult,
-  failure: Failure,
-  signature: string,
-  reruns: readonly Rerun[],
-  previous: TrackedIssue | undefined,
-): string {
+function issueBody(occurrence: Occurrence, signature: FailureSignature, closed: TrackedIssue | undefined): string {
+  const { failure } = occurrence;
   return [
     signatureMarker(signature),
-    ...(previous ? [`Volta da falha de #${previous.number}, que foi fechada.`, ""] : []),
+    ...(closed ? [`Volta da falha de #${closed.number}, que foi fechada.`, ""] : []),
     "## Falha",
     "",
     `- **Assinatura:** \`${signature}\``,
     `- **Serviço:** \`${failure.service}\``,
     `- **Checagem:** \`${failure.check}\``,
     `- **Tipo:** \`${failure.kind}\``,
-    ...occurrence(run, failure, reruns),
+    ...occurrenceDetails(occurrence),
   ].join("\n");
 }
 
-function occurrenceComment(
-  run: RunResult,
-  failure: Failure,
-  classification: Classification,
-  reruns: readonly Rerun[],
-): string {
-  return [`## Nova ocorrência: ${CLASSIFICATIONS[classification].title}`, "", ...occurrence(run, failure, reruns)].join(
-    "\n",
-  );
+function occurrenceComment(occurrence: Occurrence): string {
+  const { heading } = CLASSIFICATIONS[occurrence.classification];
+  return [`## Nova ocorrência: ${heading}`, "", ...occurrenceDetails(occurrence)].join("\n");
 }
 
-async function report(
-  issueTracker: IssueTracker,
-  run: RunResult,
-  failure: Failure,
-  classification: Classification,
-  reruns: readonly Rerun[],
-): Promise<string> {
+async function file(issueTracker: IssueTracker, occurrence: Occurrence): Promise<string> {
+  const { failure, classification } = occurrence;
   const signature = failureSignatureOf(failure);
   const latest = await issueTracker.findLatestBySignature(signature);
   if (latest?.state === "open") {
-    await issueTracker.comment(latest.number, occurrenceComment(run, failure, classification, reruns));
+    await issueTracker.comment(latest.number, occurrenceComment(occurrence));
     return `commented on #${latest.number}`;
   }
   const issue = await issueTracker.createIssue({
     title: `ci: ${failure.service} ${failure.check} falhou`,
-    body: issueBody(run, failure, signature, reruns, latest),
+    body: issueBody(occurrence, signature, latest),
     labels: CLASSIFICATIONS[classification].labels,
   });
   return `opened #${issue.number}`;
 }
 
-/** Reruns each failure of a C3/C4 run and files the confirmed ones through the IssueTracker. */
+/**
+ * Reruns each failure of a C3/C4 run result file and files every ConfirmedFailure and FlakyTest through the
+ * IssueTracker; infrastructure failures are ignored. Exits 1 only when the run result is missing or malformed.
+ */
 export async function runFailureReporter(
   argv: readonly string[],
   { issueTracker }: FailureReporterPorts,
@@ -197,14 +199,14 @@ export async function runFailureReporter(
   }
   const lines: string[] = [];
   for (const failure of run.failures) {
+    const subject = `${failure.service} ${failure.check}`;
     if (failure.kind === INFRASTRUCTURE) {
-      lines.push(`${INFRASTRUCTURE} ${failure.service} ${failure.check}: ignored`);
+      lines.push(`${INFRASTRUCTURE} ${subject}: ignored`);
       continue;
     }
-    const reruns = rerunUntilPass(failure);
-    const classification: Classification = reruns.some(({ passed }) => passed) ? "FlakyTest" : "ConfirmedFailure";
-    const outcome = await report(issueTracker, run, failure, classification, reruns);
-    lines.push(`${CLASSIFICATIONS[classification].report} ${failure.service} ${failure.check}: ${outcome}`);
+    const occurrence = classify(run, failure);
+    const outcome = await file(issueTracker, occurrence);
+    lines.push(`${CLASSIFICATIONS[occurrence.classification].logWord} ${subject}: ${outcome}`);
   }
   return { exitCode: 0, output: lines.join("\n") };
 }

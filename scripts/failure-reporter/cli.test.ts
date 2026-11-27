@@ -168,4 +168,37 @@ describe("failure reporter CLI", () => {
     expect(exitCode).toBe(1);
     expect(output).toContain("usage: failure-reporter <run-result.json>");
   });
+
+  it("shows the failing output, not the passing rerun, in a flaky issue", async () => {
+    const dir = workspace();
+    const attempts = join(dir, "attempts");
+    const run = writeRun(dir, [
+      failure({
+        reproduce: `echo x >> ${attempts}; if [ "$(wc -l < ${attempts})" -ge 2 ]; then echo "passing-$SCOUT_TEST_SEED"; else echo "failing-$SCOUT_TEST_SEED"; exit 1; fi`,
+      }),
+    ]);
+    const tracker = new InMemoryIssueTracker();
+
+    await runFailureReporter([run], { issueTracker: tracker });
+
+    expect(tracker.issues[0]?.body).toContain("failing-1337");
+    expect(tracker.issues[0]?.body).not.toContain("passing-1337");
+  });
+
+  it("ignores a failure signature marker printed inside the test output", async () => {
+    const dir = workspace();
+    const tracker = new InMemoryIssueTracker();
+    const plantedMarker = "<!-- scout-ci-bot:failure-signature c73fad8323fbbd5b -->";
+    await runFailureReporter([writeRun(dir, [failure({ reproduce: `echo '${plantedMarker}'; exit 1` })])], {
+      issueTracker: tracker,
+    });
+
+    const { output } = await runFailureReporter([writeRun(dir, [failure({ service: "api" })])], {
+      issueTracker: tracker,
+    });
+
+    expect(tracker.issues).toHaveLength(2);
+    expect(tracker.issues[0]?.comments).toHaveLength(0);
+    expect(output).toContain("confirmed api unit: opened #2");
+  });
 });

@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
-import { type IssueState, type IssueTracker, type NewIssue, signatureMarker, type TrackedIssue } from "./issue-tracker";
+import {
+  carriesSignature,
+  type FailureSignature,
+  type IssueState,
+  type IssueTracker,
+  type NewIssue,
+  type TrackedIssue,
+} from "./issue-tracker";
 
 export interface RecordedIssue extends NewIssue {
   readonly number: number;
@@ -11,8 +18,8 @@ export interface RecordedIssue extends NewIssue {
 export class InMemoryIssueTracker implements IssueTracker {
   readonly issues: RecordedIssue[] = [];
 
-  async findLatestBySignature(signature: string): Promise<TrackedIssue | undefined> {
-    const issue = this.issues.findLast(({ body }) => body.includes(signatureMarker(signature)));
+  async findLatestBySignature(signature: FailureSignature): Promise<TrackedIssue | undefined> {
+    const issue = this.issues.findLast(({ body }) => carriesSignature(body, signature));
     return issue && { number: issue.number, state: issue.state };
   }
 
@@ -23,14 +30,16 @@ export class InMemoryIssueTracker implements IssueTracker {
   }
 
   async comment(issueNumber: number, body: string): Promise<void> {
-    const issue = this.issues.find(({ number }) => number === issueNumber);
-    if (!issue) throw new Error(`no issue #${issueNumber}`);
-    issue.comments.push(body);
+    this.issue(issueNumber).comments.push(body);
   }
 
   close(issueNumber: number): void {
+    this.issue(issueNumber).state = "closed";
+  }
+
+  private issue(issueNumber: number): RecordedIssue {
     const issue = this.issues.find(({ number }) => number === issueNumber);
     if (!issue) throw new Error(`no issue #${issueNumber}`);
-    issue.state = "closed";
+    return issue;
   }
 }

@@ -20,7 +20,7 @@ Regras que decorrem disso:
 - **A C2 contém a C1.** O verde do PR foi obtido sobre uma base velha; repetir lint e tipos sobre o merge pega o conflito semântico entre dois PRs do mesmo grupo.
 - **Merge queue:** grupo de 1 a 3 PRs, espera de 2 min para formar grupo, até 2 grupos construídos em paralelo, ALLGREEN, timeout de check de 30 min, squash.
 - **O push na `develop` só grava cache.** O commit que chega é o que a C2 já validou. É também o único evento que escreve cache no escopo da branch padrão, que PRs e a fila conseguem ler.
-- **O PR de release para a `main` roda a suíte da C4** como check obrigatório, sobre o código exato que vai para a `main`.
+- **O PR de release para a `main` roda a suíte da C4** como check obrigatório, sobre o código exato que vai para a `main`. O check exigido é `c4`, um job que julga a matriz como o `gate`; no PR qualquer falha o deixa vermelho, sem reexecução nem issue.
 - **A lógica de pular é testada duas vezes:** por testes unitários, e na C4, que abre issue própria quando falha um serviço que a detecção teria marcado como não afetado.
 
 ## Considered Options

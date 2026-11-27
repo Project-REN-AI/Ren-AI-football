@@ -5,12 +5,14 @@ on:
   schedule:
     - cron: "23 4 * * *"
   workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 permissions: {}
 
 concurrency:
-  group: nightly
-  cancel-in-progress: false
+  group: nightly-${{ github.event.pull_request.number || 'scheduled' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   targets:
@@ -50,7 +52,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
-          base=$(gh api "repos/$REPOSITORY/actions/workflows/nightly.yml/runs?branch=develop&status=success&per_page=1" \
+          base=$(gh api "repos/$REPOSITORY/actions/workflows/nightly.yml/runs?branch=develop&event=schedule&status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha // empty')
           if [ -n "$base" ] && ! git merge-base --is-ancestor "$base" HEAD; then base=""; fi
           echo "commits since the last successful nightly: ${base:-unknown, the skip cross-check will not run}..HEAD"
@@ -61,7 +63,7 @@ jobs:
     needs: [targets]
     runs-on: ubuntu-latest
     timeout-minutes: 55
-    environment: ci-bot
+    environment: ${{ github.event_name != 'pull_request' && 'ci-bot' || '' }}
     permissions:
       contents: read
     strategy:
@@ -340,7 +342,13 @@ jobs:
           if [ -f "$RESULT" ]; then count=$(jq '.failures | length' "$RESULT"); fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
-      - if: ${{ always() && steps.findings.outputs.count != '0' }}
+      - if: ${{ always() && github.event_name == 'pull_request' && steps.findings.outputs.count != '0' }}
+        name: Block the release on findings
+        run: |
+          jq -r '.failures[] | "\(.service) \(.check): \(.kind) failure, seed \(.seed)"' "$RESULT"
+          exit 1
+
+      - if: ${{ always() && github.event_name != 'pull_request' && steps.findings.outputs.count != '0' }}
         id: app-token
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
@@ -350,7 +358,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-issues: write
 
-      - if: ${{ always() && steps.findings.outputs.count != '0' }}
+      - if: ${{ always() && github.event_name != 'pull_request' && steps.findings.outputs.count != '0' }}
         id: report
         name: Report findings as issues
         timeout-minutes: 15
@@ -366,3 +374,24 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPOSITORY: ${{ github.repository }}
+
+  c4:
+    name: c4
+    if: ${{ always() }}
+    needs: [targets, nightly]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - run: bun scripts/gate-verdict/main.ts "$NEEDS"
+        env:
+          NEEDS: ${{ toJSON(needs) }}

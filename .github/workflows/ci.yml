@@ -204,7 +204,7 @@ jobs:
 
       - if: ${{ !contains(fromJSON('["typescript", "python", "java", "go"]'), matrix.service.language) }}
         run: |
-          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
+          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml and to scripts/pre-push"
           exit 1
         env:
           LANGUAGE: ${{ matrix.service.language }}
@@ -355,7 +355,7 @@ jobs:
           if [ "$EVENT_NAME" = merge_group ]; then
             ./mvnw --batch-mode --no-transfer-progress test
           else
-            ./mvnw --batch-mode --no-transfer-progress test -DexcludedGroups=architecture
+            ./mvnw --batch-mode --no-transfer-progress test -DexcludedGroups=architecture,integration
           fi
         env:
           EVENT_NAME: ${{ github.event_name }}

@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<ruleset name="scout"
+    xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+  <description>Best practices and error-prone rules, minus those Error Prone already enforces and TestClassWithoutTestCases, which does not recognize ArchUnit @ArchTest fields.</description>
+
+  <rule ref="category/java/bestpractices.xml">
+    <exclude name="AvoidPrintStackTrace"/>
+    <exclude name="ExhaustiveSwitchHasDefault"/>
+    <exclude name="LiteralsFirstInComparisons"/>
+    <exclude name="MissingOverride"/>
+    <exclude name="PrimitiveWrapperInstantiation"/>
+    <exclude name="ReplaceEnumerationWithIterator"/>
+    <exclude name="ReplaceHashtableWithMap"/>
+    <exclude name="ReplaceJavaUtilVector"/>
+    <exclude name="UnusedAssignment"/>
+    <exclude name="UnusedFormalParameter"/>
+    <exclude name="UnusedLocalVariable"/>
+    <exclude name="UnusedPrivateField"/>
+    <exclude name="UnusedPrivateMethod"/>
+  </rule>
+
+  <rule ref="category/java/errorprone.xml">
+    <exclude name="AvoidDecimalLiteralsInBigDecimalConstructor"/>
+    <exclude name="ComparisonWithNaN"/>
+    <exclude name="CompareObjectsWithEquals"/>
+    <exclude name="DoNotThrowExceptionInFinally"/>
+    <exclude name="EqualsNull"/>
+    <exclude name="IdempotentOperations"/>
+    <exclude name="ImplicitSwitchFallThrough"/>
+    <exclude name="LongLiteralEndingWithLowercaseL"/>
+    <exclude name="OverrideBothEqualsAndHashcode"/>
+    <exclude name="ReturnFromFinallyBlock"/>
+    <exclude name="StringBufferInstantiationWithChar"/>
+    <exclude name="TestClassWithoutTestCases"/>
+    <exclude name="UseEqualsToCompareStrings"/>
+    <exclude name="UselessOperationOnImmutable"/>
+    <exclude name="UselessPureMethodCall"/>
+  </rule>
+</ruleset>

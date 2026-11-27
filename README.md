@@ -29,7 +29,7 @@ git config core.hooksPath .githooks
 ```
 
 - **pre-commit:** `bun fmt --staged` formata só os arquivos em stage.
-- **pre-push:** roda as checagens da C1 que só precisam do Bun e do uv: formatação, typecheck, lint e teste do workspace `scripts/` e de cada **Serviço Afetado** (o mesmo comando do job `service` do `ci.yml`), `check-comments` nas linhas adicionadas, a política de workflows e o orçamento do Compose. Os **Serviços Afetados** saem da mesma detecção do CI (`scripts/affected-services`), contra a `develop` do remoto do push. Os checks rodam na árvore de trabalho, então faça push com ela limpa.
+- **pre-push:** roda as checagens da C1 que só precisam do Bun, do uv e do JDK: formatação, typecheck, lint e teste do workspace `scripts/` e de cada **Serviço Afetado** (os mesmos comandos do job `service` do `ci.yml` no PR), `check-comments` nas linhas adicionadas, a política de workflows e o orçamento do Compose. Os **Serviços Afetados** saem da mesma detecção do CI (`scripts/affected-services`), contra a `develop` do remoto do push. Os checks rodam na árvore de trabalho, então faça push com ela limpa.
 
 Ficam só no CI as checagens que dependem de ferramenta externa ou do PR: gitleaks, typos, lychee, osv-scanner, `docker compose config`, actionlint, zizmor e o título do PR.
 

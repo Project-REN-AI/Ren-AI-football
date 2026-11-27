@@ -79,6 +79,10 @@ beforeEach(() => {
   write("services/scouting/app.py", "x = 1\n");
   write("services/matching/service.json", JSON.stringify({ language: "go", dependsOn: [] }));
   write("services/matching/main.go", "package main\n");
+  write("services/catalog/service.json", JSON.stringify({ language: "java", dependsOn: [] }));
+  write("services/catalog/mvnw", '#!/bin/sh\necho "ran mvnw in $(basename "$PWD") $*"\n');
+  chmodSync(join(repo, "services/catalog/mvnw"), 0o755);
+  write("services/catalog/src/Main.java", "class Main {}\n");
 });
 
 afterEach(() => {
@@ -130,6 +134,21 @@ describe("pre-push CLI", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("runs the PR checks of an affected Java service through its Maven wrapper, as CI does", () => {
+    const base = commit("base");
+    write("services/catalog/src/Main.java", "class Main { }\n");
+    const target = commit("change catalog");
+
+    const { exitCode, output } = prePush(pushLine(target), "--base", base);
+
+    expect(output).toContain("ran mvnw in catalog --batch-mode --no-transfer-progress spotless:check compile");
+    expect(output).toContain(
+      "ran mvnw in catalog --batch-mode --no-transfer-progress test -DexcludedGroups=architecture",
+    );
+    expect(output).not.toContain("ran web");
+    expect(exitCode).toBe(0);
+  });
+
   it("fails like CI for an affected service whose language has no CI path yet", () => {
     const base = commit("base");
     write("services/matching/main.go", "package main\n\nfunc main() {}\n");
@@ -159,7 +178,7 @@ describe("pre-push CLI", () => {
 
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
-    expect(output).toContain("affected services: matching, scouting, web");
+    expect(output).toContain("affected services: catalog, matching, scouting, web");
     expect(output).toContain("ran web test");
     expect(output).toContain("ran uv --directory services/scouting run --locked pytest");
     expect(output).toContain("no CI path for go services yet");

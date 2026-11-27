@@ -17,7 +17,7 @@ interface AffectedService {
   readonly language: string;
 }
 
-type Check = { readonly command: readonly string[] } | { readonly unsupportedLanguage: string };
+type Check = { readonly command: readonly string[]; readonly cwd?: string } | { readonly unsupportedLanguage: string };
 
 function parseArgs(argv: readonly string[]): { base: string } {
   let base: string | undefined;
@@ -66,14 +66,24 @@ function uvChecks(path: string): Check[] {
   return commands.map((command) => ({ command: ["uv", "--directory", path, "run", "--locked", ...command] }));
 }
 
+function mavenChecks(path: string): Check[] {
+  const mvnw = ["./mvnw", "--batch-mode", "--no-transfer-progress"];
+  return [
+    { command: [...mvnw, "spotless:check", "compile"], cwd: path },
+    { command: [...mvnw, "test", "-DexcludedGroups=architecture"], cwd: path },
+  ];
+}
+
 function serviceChecks({ path, language }: AffectedService): Check[] {
   if (language === "typescript") return workspaceChecks(path);
   if (language === "python") return uvChecks(path);
+  if (language === "java") return mavenChecks(path);
   return [{ unsupportedLanguage: language }];
 }
 
 function describeCheck(check: Check): string {
-  return "command" in check ? check.command.join(" ") : `no CI path for ${check.unsupportedLanguage} services yet`;
+  if (!("command" in check)) return `no CI path for ${check.unsupportedLanguage} services yet`;
+  return check.cwd === undefined ? check.command.join(" ") : `(cd ${check.cwd} && ${check.command.join(" ")})`;
 }
 
 function passes(check: Check): boolean {
@@ -83,7 +93,7 @@ function passes(check: Check): boolean {
   }
   const [program = "", ...args] = check.command;
   console.log(`$ ${describeCheck(check)}`);
-  return spawnSync(program, args, { stdio: "inherit" }).status === 0;
+  return spawnSync(program, args, { stdio: "inherit", cwd: check.cwd }).status === 0;
 }
 
 function checksFor(base: string, targets: readonly string[]): Check[] {

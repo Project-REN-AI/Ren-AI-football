@@ -10,6 +10,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
@@ -36,11 +38,14 @@ class PostgresIntegrationTest {
         insert.setString(1, Greeting.to(" Scout ").text());
         insert.executeUpdate();
       }
+      List<String> texts = new ArrayList<>();
       try (Statement select = connection.createStatement();
           ResultSet rows = select.executeQuery("select text from greeting")) {
-        assertThat(rows.next()).isTrue();
-        assertThat(rows.getString("text")).isEqualTo("Hello, Scout!");
+        while (rows.next()) {
+          texts.add(rows.getString("text"));
+        }
       }
+      assertThat(texts).containsExactly("Hello, Scout!");
     }
   }
 }

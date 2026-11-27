@@ -4,11 +4,13 @@
   "timezone": "America/Sao_Paulo",
   "schedule": ["* 0-5 * * 1"],
   "automerge": false,
+  "minimumReleaseAge": "3 days",
   "semanticCommits": "enabled",
   "npm": { "enabled": false },
   "vulnerabilityAlerts": {
     "enabled": true,
-    "schedule": ["at any time"]
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null
   },
   "postUpdateOptions": ["gomodTidy"],
   "packageRules": [

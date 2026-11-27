@@ -143,7 +143,9 @@ describe("pre-push CLI", () => {
 
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
-    expect(output).toContain("ran mvnw in catalog --batch-mode --no-transfer-progress spotless:check compile");
+    expect(output).toContain(
+      "ran mvnw in catalog --batch-mode --no-transfer-progress spotless:check test-compile checkstyle:check pmd:check",
+    );
     expect(output).toContain(
       "ran mvnw in catalog --batch-mode --no-transfer-progress test -DexcludedGroups=architecture",
     );

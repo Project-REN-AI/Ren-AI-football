@@ -72,7 +72,7 @@ function uvChecks(path: string): Check[] {
 function mavenChecks(path: string): Check[] {
   const mvnw = ["./mvnw", "--batch-mode", "--no-transfer-progress"];
   return [
-    { command: [...mvnw, "spotless:check", "compile"], cwd: path },
+    { command: [...mvnw, "spotless:check", "test-compile", "checkstyle:check", "pmd:check"], cwd: path },
     { command: [...mvnw, "test", "-DexcludedGroups=architecture"], cwd: path },
   ];
 }

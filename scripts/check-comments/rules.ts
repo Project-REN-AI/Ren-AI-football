@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { lex, type Comment, type Language } from "./lexer";
+import { symbolTable, type SymbolTable } from "./symbols";
 
 export interface Violation {
   readonly line: number;
@@ -28,6 +29,10 @@ const NARRATION =
   "put the why in an ADR (docs/adr/) or an issue. " +
   "Allowed: SPDX header, doc comment on an exported symbol, external constraint with a link, " +
   "`See docs/adr/NNNN-<slug>.md`, `TODO(#<issue>)`";
+const DOC_ON_PRIVATE_SYMBOL =
+  "doc comment not right above an exported symbol: a doc comment documents the contract of an exported " +
+  "(public) symbol only; on anything else rename, extract or change the type so the code says it, " +
+  "or put the why in an ADR (docs/adr/) or an issue";
 const TODO_WITHOUT_ISSUE = "TODO without an issue: open an issue and write `TODO(#<issue>): ...`, or do it now";
 
 const SUPPRESSION_WITHOUT_LINK =
@@ -46,7 +51,6 @@ const DIRECTIVES: Partial<Record<Language, RegExp>> = {
   go: /^go:\w+|^line \S|^\+build |^export \w/,
   python: /^!|^-\*- coding|^(vim?|ex): .*coding[:=]/,
 };
-const GO_DECLARATION = /^(package|func|type|var|const)\b/;
 
 function isDirective(text: string, language: Language): boolean {
   return DIRECTIVES[language]?.test(text) ?? false;
@@ -93,31 +97,36 @@ function group(comments: readonly Comment[], language: Language): CommentGroup[]
   return groups;
 }
 
-function isGoDoc(commentGroup: CommentGroup, codeLines: readonly string[]): boolean {
-  const next = codeLines[commentGroup.endLine] ?? "";
-  return commentGroup.ownLine && GO_DECLARATION.test(next);
-}
-
 function judgeGroup(
   commentGroup: CommentGroup,
   language: Language,
-  codeLines: readonly string[],
+  symbols: SymbolTable,
   repository: Repository,
-): string | undefined {
+): Violation | undefined {
+  const violation = (message: string, lines = commentGroup.lines): Violation => ({
+    line: commentGroup.line,
+    lines,
+    message,
+  });
   const { text } = commentGroup;
   if (isDirective(text, language)) return undefined;
   if (SPDX.test(text) && commentGroup.line <= LICENSE_HEADER_LINES) return undefined;
-  if (hasTodoWithoutIssue(text)) return TODO_WITHOUT_ISSUE;
+  if (hasTodoWithoutIssue(text)) return violation(TODO_WITHOUT_ISSUE);
   if (TODO_WITH_ISSUE.test(text)) return undefined;
   const pointer = ADR_POINTER.exec(text);
   if (pointer?.[1] !== undefined) {
     return repository.exists(pointer[1])
       ? undefined
-      : `ADR pointer to ${pointer[1]}, which does not exist: create the ADR or fix the path`;
+      : violation(`ADR pointer to ${pointer[1]}, which does not exist: create the ADR or fix the path`);
   }
   if (LINK.test(text)) return undefined;
-  if (commentGroup.doc || (language === "go" && isGoDoc(commentGroup, codeLines))) return undefined;
-  return NARRATION;
+  const isDocComment = commentGroup.doc || (language === "go" && commentGroup.ownLine);
+  const symbol = isDocComment ? symbols.below(commentGroup.endLine) : undefined;
+  if (symbol?.exported === true) return undefined;
+  if (symbol !== undefined || commentGroup.doc) {
+    return violation(DOC_ON_PRIVATE_SYMBOL, [...commentGroup.lines, ...(symbol?.lines ?? [])]);
+  }
+  return violation(NARRATION);
 }
 
 function judgeSuppressions(
@@ -152,10 +161,14 @@ export function judgeLicenseHeader(source: string, language: Language): Violatio
 export function judgeSource(source: string, language: Language, repository: Repository): Violation[] {
   const { comments, codeLines } = lex(source, language);
   const { violations, suppressionLines } = judgeSuppressions(comments, codeLines);
+  const symbols = symbolTable(codeLines, language);
   const judged = comments.filter(({ line }) => !suppressionLines.has(line));
   for (const commentGroup of group(judged, language)) {
-    const message = judgeGroup(commentGroup, language, codeLines, repository);
-    if (message !== undefined) violations.push({ line: commentGroup.line, lines: commentGroup.lines, message });
+    const violation = judgeGroup(commentGroup, language, symbols, repository);
+    if (violation !== undefined) violations.push(violation);
+  }
+  for (const { line, lines, exported } of symbols.docstrings) {
+    if (!exported) violations.push({ line, lines, message: DOC_ON_PRIVATE_SYMBOL });
   }
   return violations;
 }

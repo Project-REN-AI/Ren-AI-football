@@ -299,6 +299,140 @@ describe("check-comments on lines added between two refs", () => {
   });
 });
 
+describe("check-comments on doc comments", () => {
+  it.each([
+    [
+      "ts",
+      ["export class Sample {", "  /** Adds one. */", "  next(n: number): number {", "    return n + 1;", "  }", "}"],
+    ],
+    ["ts", ["export interface Sample {", "  /** The answer. */", "  readonly answer: number;", "}"]],
+    ["ts", ["/** Adds one. */", "function next(n: number): number {", "  return n + 1;", "}", "export { next };"]],
+    ["ts", ["/** Holds the answer. */", "@sealed", "export default class Sample {}"]],
+    [
+      "java",
+      [
+        "public final class Sample {",
+        "  /** Adds one. */",
+        "  public int next(int n) {",
+        "    return n + 1;",
+        "  }",
+        "}",
+      ],
+    ],
+    ["java", ["public interface Sample {", "  /** Adds one. */", "  int next(int n);", "}"]],
+    [
+      "java",
+      ["public class Sample {", "  /** Hook for subclasses. */", "  @Override", "  protected void run() {}", "}"],
+    ],
+    [
+      "go",
+      [
+        "package sample",
+        "",
+        "// Sample holds the answer.",
+        "type Sample struct{}",
+        "",
+        "// Next adds one.",
+        "func (s *Sample) Next(n int) int { return n + 1 }",
+      ],
+    ],
+    ["go", ["package sample", "", "const (", "\t// Answer is the answer.", "\tAnswer = 42", ")"]],
+    [
+      "py",
+      [
+        "class Sample:",
+        '    """Hold the answer."""',
+        "",
+        "    def next(self, n: int) -> int:",
+        '        """Add one."""',
+        "        return n + 1",
+      ],
+    ],
+    [
+      "py",
+      [
+        '"""Sample module."""',
+        "",
+        "def __getattr__(name: str) -> int:",
+        '    """Resolve the answer."""',
+        "    return 42",
+      ],
+    ],
+  ] as const)("accepts a doc comment above an exported symbol in %s", (language, body) => {
+    const { repo, base } = addedFile(language, body);
+
+    const { exitCode, output } = checkComments(repo, "--base", base);
+
+    expect(output).toContain("check-comments: clean");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["ts", ["/** Adds one. */", "function next(n: number): number {", "  return n + 1;", "}"], 2],
+    [
+      "ts",
+      [
+        "export class Sample {",
+        "  /** Adds one. */",
+        "  private next(n: number): number {",
+        "    return n + 1;",
+        "  }",
+        "}",
+      ],
+      3,
+    ],
+    ["ts", ["export function run(): void {", "  /** The counter. */", "  const runs = 1;", "  void runs;", "}"], 3],
+    ["ts", ["/** Floating doc comment. */", "", "export const answer = 42;"], 2],
+    [
+      "java",
+      [
+        "public final class Sample {",
+        "  /** Adds one. */",
+        "  private int next(int n) {",
+        "    return n + 1;",
+        "  }",
+        "}",
+      ],
+      3,
+    ],
+    ["java", ["/** Holds the answer. */", "final class Sample {}"], 2],
+    [
+      "java",
+      ["final class Sample {", "  /** Adds one. */", "  public int next(int n) {", "    return n + 1;", "  }", "}"],
+      3,
+    ],
+    ["go", ["package sample", "", "// next adds one.", "func next(n int) int { return n + 1 }"], 4],
+    [
+      "go",
+      [
+        "package sample",
+        "",
+        "type sample struct{}",
+        "",
+        "// Next adds one.",
+        "func (s *sample) Next(n int) int { return n + 1 }",
+      ],
+      6,
+    ],
+    ["go", ["package sample", "", "const (", "\t// answer is the answer.", "\tanswer = 42", ")"], 5],
+    ["py", ["def _next(n: int) -> int:", '    """Add one."""', "    return n + 1"], 3],
+    ["py", ["def run() -> None:", "    def step() -> None:", '        """Take a step."""', "    step()"], 4],
+    [
+      "py",
+      ["class _Sample:", "    def next(self, n: int) -> int:", '        """Add one."""', "        return n + 1"],
+      4,
+    ],
+  ] as const)("fails a doc comment above a non-exported symbol in %s", (language, body, line) => {
+    const { repo, base } = addedFile(language, body);
+
+    const { exitCode, output } = checkComments(repo, "--base", base);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain(`src/sample.${language}:${line}:`);
+    expect(output).toContain("exported");
+  });
+});
+
 describe("check-comments on the whole repository", () => {
   it("fails a violation however old it is, and the missing SPDX header", () => {
     const repo = createRepo();

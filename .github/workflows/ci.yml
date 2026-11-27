@@ -234,11 +234,24 @@ jobs:
         run: bun run --cwd "$SERVICE_PATH" test
 
       - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
-        name: image build and smoke (Node LTS)
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: image build (Node LTS)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.service.path }}/Dockerfile
+          load: true
+          push: false
+          tags: scout-${{ matrix.service.name }}:ci
+          cache-from: type=gha,scope=image-${{ matrix.service.name }}
+
+      - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: image smoke (Node LTS)
         env:
           IMAGE: scout-${{ matrix.service.name }}:ci
         run: |
-          docker build --file "$SERVICE_PATH/Dockerfile" --tag "$IMAGE" .
           docker run --detach --rm --name smoke --publish 3000:3000 "$IMAGE"
           for _ in $(seq 1 30); do
             if curl --fail --silent --max-time 2 --output /dev/null http://127.0.0.1:3000/; then

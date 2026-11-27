@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+*
+!package.json
+!bun.lock
+!bunfig.toml
+!scripts/package.json
+!web/
+web/.next/
+web/node_modules/
+web/next-env.d.ts
+web/*.tsbuildinfo

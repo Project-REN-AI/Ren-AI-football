@@ -233,6 +233,23 @@ jobs:
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
         run: bun run --cwd "$SERVICE_PATH" test
 
+      - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: image build and smoke (Node LTS)
+        env:
+          IMAGE: scout-${{ matrix.service.name }}:ci
+        run: |
+          docker build --file "$SERVICE_PATH/Dockerfile" --tag "$IMAGE" .
+          docker run --detach --rm --name smoke --publish 3000:3000 "$IMAGE"
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --max-time 2 --output /dev/null http://127.0.0.1:3000/; then
+              docker stop smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
       - if: ${{ matrix.service.language == 'go' }}
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -351,7 +368,7 @@ jobs:
 
       - if: ${{ matrix.service.language == 'java' && matrix.category == 'static' }}
         working-directory: ${{ matrix.service.path }}
-        run: ./mvnw --batch-mode --no-transfer-progress spotless:check compile
+        run: ./mvnw --batch-mode --no-transfer-progress spotless:check test-compile checkstyle:check pmd:check
 
       - if: ${{ matrix.service.language == 'java' && matrix.category == 'test' }}
         working-directory: ${{ matrix.service.path }}

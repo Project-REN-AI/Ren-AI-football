@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<suppressions>
+  <suppress checks="com\.puppycrawl\.tools\.checkstyle\.checks\.whitespace\." files="."/>
+  <suppress checks="\.(Indentation|CommentsIndentation|LineLength|TextBlockGoogleStyleFormatting)Check$" files="."/>
+  <suppress id="noTrailingWhitespace" files="."/>
+  <suppress checks="\.MissingSwitchDefaultCheck$" files="."/>
+  <suppress checks="\.TodoCommentCheck$" files="."/>
+</suppressions>

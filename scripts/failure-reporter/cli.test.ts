@@ -238,4 +238,41 @@ describe("failure reporter CLI", () => {
     expect(tracker.issues[0]?.comments).toHaveLength(0);
     expect(output).toContain("confirmed api unit: opened #2");
   });
+
+  it("writes to --new-confirmed only the confirmed failures that opened a new issue", async () => {
+    const dir = workspace();
+    const attempts = join(dir, "attempts");
+    const tracker = new InMemoryIssueTracker();
+    await runFailureReporter([writeRun(dir, [failure({ service: "catalog" })])], { issueTracker: tracker });
+    const newConfirmed = join(dir, "new-confirmed.json");
+    const run = writeRun(dir, [
+      failure({ service: "catalog" }),
+      failure({
+        service: "scouting",
+        check: "race",
+        reproduce: `echo x >> ${attempts}; [ "$(wc -l < ${attempts})" -ge 2 ]`,
+      }),
+      failure({ service: "web", kind: "infrastructure" }),
+      failure({ service: "web", check: "lint", kind: "static" }),
+    ]);
+
+    const { exitCode } = await runFailureReporter([run, "--new-confirmed", newConfirmed], { issueTracker: tracker });
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(newConfirmed, "utf8"))).toEqual({
+      ...RUN,
+      failures: [{ service: "web", check: "lint", kind: "static", seed: "1337", reproduce: "exit 1" }],
+    });
+  });
+
+  it("writes an empty --new-confirmed run result when nothing new was confirmed", async () => {
+    const dir = workspace();
+    const newConfirmed = join(dir, "new-confirmed.json");
+
+    await runFailureReporter(["--new-confirmed", newConfirmed, writeRun(dir, [])], {
+      issueTracker: new InMemoryIssueTracker(),
+    });
+
+    expect(JSON.parse(readFileSync(newConfirmed, "utf8"))).toEqual({ ...RUN, failures: [] });
+  });
 });

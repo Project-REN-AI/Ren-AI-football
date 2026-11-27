@@ -1,40 +1,40 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { fileURLToPath } from "node:url";
+import { affectedServicesBetween, servicesAt } from "../affected-services/verdict";
 import {
+  describeFiling,
   type FailureSignature,
+  failureSignatureOf,
+  type FiledIssue,
+  fileBySignature,
   type IssueTracker,
   signatureMarker,
   type TrackedIssue,
 } from "../failure-reporter/issue-tracker";
 import { type Failure, INFRASTRUCTURE, parseRunResult, type RunResult } from "../failure-reporter/run-result";
 
-const AFFECTED_SERVICES_CLI = fileURLToPath(new URL("../affected-services/main.ts", import.meta.url));
+const SCRIPT = "skip-cross-check";
 const LABELS = ["ci-bot", "bug", "needs-triage"] as const;
-const USAGE = "usage: skip-cross-check --base <ref> --target <ref> <run-result.json>...";
+const KINDS_NO_COMMIT_CAUSES: ReadonlySet<string> = new Set([INFRASTRUCTURE, "vulnerability", "link"]);
+const USAGE = `usage: ${SCRIPT} --base <ref> --target <ref> <new-confirmed-run-result.json>...`;
 
-interface AffectedService {
-  readonly name: string;
-}
-
-interface AffectedServices {
-  readonly all: boolean;
-  readonly services: readonly AffectedService[];
+interface Occurrence {
+  readonly run: RunResult;
+  readonly failure: Failure;
 }
 
 interface SkippedService {
   readonly service: string;
-  readonly occurrences: readonly { readonly run: RunResult; readonly failure: Failure }[];
+  readonly occurrences: readonly Occurrence[];
 }
 
-interface CrossCheckRange {
+interface CommitRange {
   readonly base: string;
   readonly target: string;
-  readonly affected: readonly string[];
+  readonly commits: readonly string[];
 }
 
 export interface SkipCrossCheckPorts {
@@ -47,26 +47,23 @@ export interface SkipCrossCheckResult {
   readonly output: string;
 }
 
-function affectedServices(cwd: string, ...args: string[]): AffectedServices {
-  const result = spawnSync("bun", [AFFECTED_SERVICES_CLI, "--json", ...args], { cwd, encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`affected-services ${args.join(" ")} failed: ${result.stderr.trim()}`);
-  return JSON.parse(result.stdout) as AffectedServices;
-}
-
-function commitOf(cwd: string, ref: string): string {
-  const result = spawnSync("git", ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], {
+function firstParentCommits(cwd: string, base: string, target: string): string[] {
+  const result = spawnSync("git", ["rev-list", "--first-parent", "--reverse", `${base}..${target}`, "--"], {
     cwd,
     encoding: "utf8",
   });
-  if (result.status !== 0) throw new Error(`${ref} is not a commit`);
-  return result.stdout.trim();
+  if (result.status !== 0) throw new Error(`git rev-list ${base}..${target} failed: ${result.stderr.trim()}`);
+  return result.stdout.split("\n").filter((line) => line !== "");
 }
 
-function skipSignatureOf(service: string): FailureSignature {
-  return createHash("sha256")
-    .update(["skipped-service", service].join("\n"))
-    .digest("hex")
-    .slice(0, 16) as FailureSignature;
+function affectedByAnyCommit(cwd: string, { target, commits }: CommitRange): ReadonlySet<string> {
+  const affected = new Set<string>();
+  for (const commit of commits) {
+    const verdict = affectedServicesBetween(`${commit}^`, commit, cwd);
+    if (verdict.all) return new Set(servicesAt(target, cwd).map(({ name }) => name));
+    for (const { name } of verdict.services) affected.add(name);
+  }
+  return affected;
 }
 
 function skippedServices(
@@ -74,11 +71,14 @@ function skippedServices(
   services: ReadonlySet<string>,
   affected: ReadonlySet<string>,
 ): SkippedService[] {
-  const skipped = new Map<string, SkippedService["occurrences"][number][]>();
+  const skipped = new Map<string, Occurrence[]>();
   for (const run of runs) {
     for (const failure of run.failures) {
-      if (failure.kind === INFRASTRUCTURE || !services.has(failure.service) || affected.has(failure.service)) continue;
-      skipped.set(failure.service, [...(skipped.get(failure.service) ?? []), { run, failure }]);
+      const { service, kind } = failure;
+      if (KINDS_NO_COMMIT_CAUSES.has(kind) || !services.has(service) || affected.has(service)) continue;
+      const occurrences = skipped.get(service) ?? [];
+      occurrences.push({ run, failure });
+      skipped.set(service, occurrences);
     }
   }
   return [...skipped]
@@ -86,12 +86,17 @@ function skippedServices(
     .toSorted((left, right) => left.service.localeCompare(right.service));
 }
 
-function occurrenceDetails({ occurrences }: SkippedService, { base, target, affected }: CrossCheckRange): string[] {
+function occurrenceDetails(
+  { occurrences }: SkippedService,
+  { base, target }: CommitRange,
+  affected: ReadonlySet<string>,
+): string[] {
+  const names = [...affected].toSorted();
   return [
-    `- **Commits:** \`${base}...${target}\``,
-    `- **Serviços Afetados:** ${affected.length === 0 ? "nenhum" : affected.map((name) => `\`${name}\``).join(", ")}`,
+    `- **Commits:** \`${base}..${target}\``,
+    `- **Serviços Afetados:** ${names.length === 0 ? "nenhum" : names.map((name) => `\`${name}\``).join(", ")}`,
     "",
-    "## Checagens que falharam",
+    "## Falhas Confirmadas",
     "",
     ...occurrences.map(
       ({ run, failure }) =>
@@ -103,77 +108,86 @@ function occurrenceDetails({ occurrences }: SkippedService, { base, target, affe
 
 function issueBody(
   skipped: SkippedService,
-  range: CrossCheckRange,
+  details: readonly string[],
   signature: FailureSignature,
   closed: TrackedIssue | undefined,
 ): string {
   return [
     signatureMarker(signature),
     ...(closed ? [`Volta do bug de #${closed.number}, que foi fechada.`, ""] : []),
-    "## Serviço pulado",
+    "## Serviço Pulado",
     "",
     `- **Assinatura:** \`${signature}\``,
     `- **Serviço:** \`${skipped.service}\``,
     "",
-    `A suíte noturna viu \`${skipped.service}\` falhar, mas a detecção de Serviços Afetados não o marcaria para os commits abaixo: a C2 teria pulado o serviço.`,
+    `A suíte noturna confirmou falha nova em \`${skipped.service}\`, mas a detecção de Serviços Afetados não o marcou em nenhum commit do intervalo: a C2 pulou o serviço.`,
     "",
-    ...occurrenceDetails(skipped, range),
+    ...details,
   ].join("\n");
 }
 
-async function file(issueTracker: IssueTracker, skipped: SkippedService, range: CrossCheckRange): Promise<string> {
-  const signature = skipSignatureOf(skipped.service);
-  const latest = await issueTracker.findLatestBySignature(signature);
-  if (latest?.state === "open") {
-    await issueTracker.comment(
-      latest.number,
-      ["## Nova ocorrência", "", ...occurrenceDetails(skipped, range)].join("\n"),
-    );
-    return `commented on #${latest.number}`;
-  }
-  const issue = await issueTracker.createIssue({
-    title: `ci: detecção de Serviços Afetados pulou ${skipped.service}`,
-    body: issueBody(skipped, range, signature, latest),
-    labels: LABELS,
+function fileDetectionBug(
+  issueTracker: IssueTracker,
+  skipped: SkippedService,
+  range: CommitRange,
+  affected: ReadonlySet<string>,
+): Promise<FiledIssue> {
+  const signature = failureSignatureOf("skipped-service", skipped.service);
+  const details = occurrenceDetails(skipped, range, affected);
+  return fileBySignature(issueTracker, signature, {
+    comment: ["## Nova ocorrência", "", ...details].join("\n"),
+    newIssue: (closed) => ({
+      title: `ci: detecção de Serviços Afetados pulou ${skipped.service}`,
+      body: issueBody(skipped, details, signature, closed),
+      labels: LABELS,
+    }),
   });
-  return `opened #${issue.number}`;
+}
+
+function parseOptions(argv: readonly string[]): {
+  readonly base: string;
+  readonly target: string;
+  readonly paths: string[];
+} {
+  const { values, positionals } = parseArgs({
+    args: [...argv],
+    options: { base: { type: "string" }, target: { type: "string" } },
+    allowPositionals: true,
+  });
+  const { base, target } = values;
+  if (!base || !target || positionals.length === 0) throw new Error(USAGE);
+  return { base, target, paths: positionals };
 }
 
 /**
- * Compares the failures of C4 run results with the AffectedServices of the commits between --base and --target, and
- * files a detection bug through the IssueTracker for each service that failed although it was not affected.
- * Exits 1 only on bad arguments, a malformed run result or a failing affected-services call.
+ * Compares the new ConfirmedFailures in the given run results with the AffectedServices of each first-parent commit in
+ * --base..--target, and files a detection bug through the IssueTracker for every SkippedService: a service that failed
+ * although no commit of the range affected it. Exits 1 only on bad arguments, a malformed run result or a git failure.
  */
 export async function runSkipCrossCheck(
   argv: readonly string[],
   { issueTracker, cwd }: SkipCrossCheckPorts,
 ): Promise<SkipCrossCheckResult> {
-  let range: CrossCheckRange;
-  let services: ReadonlySet<string>;
+  let range: CommitRange;
   let runs: RunResult[];
+  let services: ReadonlySet<string>;
+  let affected: ReadonlySet<string>;
   try {
-    const { values, positionals } = parseArgs({
-      args: [...argv],
-      options: { base: { type: "string" }, target: { type: "string" } },
-      allowPositionals: true,
-    });
-    const { base, target } = values;
-    if (!base || !target || positionals.length === 0) throw new Error(USAGE);
-    runs = positionals.map((path) => parseRunResult(readFileSync(path, "utf8")));
-    if (commitOf(cwd, base) === commitOf(cwd, target))
-      return { exitCode: 0, output: "skip cross-check: no commits between base and target" };
-    services = new Set(affectedServices(cwd, "--all", target).services.map(({ name }) => name));
-    const verdict = affectedServices(cwd, base, target);
-    range = { base, target, affected: verdict.all ? [...services] : verdict.services.map(({ name }) => name) };
+    const { base, target, paths } = parseOptions(argv);
+    runs = paths.map((path) => parseRunResult(readFileSync(path, "utf8")));
+    range = { base, target, commits: firstParentCommits(cwd, base, target) };
+    if (range.commits.length === 0) return { exitCode: 0, output: `${SCRIPT}: no commits between base and target` };
+    services = new Set(servicesAt(target, cwd).map(({ name }) => name));
+    affected = affectedByAnyCommit(cwd, range);
   } catch (error) {
-    return { exitCode: 1, output: `skip-cross-check: ${error instanceof Error ? error.message : String(error)}` };
+    return { exitCode: 1, output: `${SCRIPT}: ${error instanceof Error ? error.message : String(error)}` };
   }
-  const skipped = skippedServices(runs, services, new Set(range.affected));
-  if (skipped.length === 0)
-    return { exitCode: 0, output: "skip cross-check: no failure outside the affected services" };
+  const skipped = skippedServices(runs, services, affected);
+  if (skipped.length === 0) return { exitCode: 0, output: `${SCRIPT}: no failure outside the affected services` };
   const lines: string[] = [];
   for (const service of skipped) {
-    lines.push(`skipped ${service.service}: ${await file(issueTracker, service, range)}`);
+    const filed = await fileDetectionBug(issueTracker, service, range, affected);
+    lines.push(`skipped ${service.service}: ${describeFiling(filed)}`);
   }
   return { exitCode: 0, output: lines.join("\n") };
 }

@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { type AffectedService, affectedServicesBetween } from "../affected-services/verdict";
 
 const USAGE = "usage: pre-push [<remote> [<url>]] [--base <ref>] < <git pre-push refs>";
 const INTEGRATION_BRANCH = "develop";
@@ -9,12 +10,6 @@ const WORKSPACE_SCRIPTS = ["format:check", "typecheck", "lint", "test"] as const
 
 function script(name: string): string {
   return fileURLToPath(new URL(`../${name}/main.ts`, import.meta.url));
-}
-
-interface AffectedService {
-  readonly name: string;
-  readonly path: string;
-  readonly language: string;
 }
 
 interface Check {
@@ -41,23 +36,6 @@ function pushedBranchTargets(stdin: string): string[] {
     .filter(([, sha = "", remoteRef = ""]) => remoteRef.startsWith("refs/heads/") && !/^0+$/.test(sha))
     .map(([, sha = ""]) => sha);
   return [...new Set(targets)];
-}
-
-function isAffectedService(value: unknown): value is AffectedService {
-  if (typeof value !== "object" || value === null) return false;
-  const { name, path, language } = value as Record<string, unknown>;
-  return typeof name === "string" && typeof path === "string" && typeof language === "string";
-}
-
-function affectedServices(base: string, target: string): AffectedService[] {
-  const result = spawnSync("bun", [script("affected-services"), "--json", base, target], { encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`affected-services ${base} ${target} failed:\n${result.stderr}`);
-  const parsed: unknown = JSON.parse(result.stdout);
-  const services = typeof parsed === "object" && parsed !== null && "services" in parsed ? parsed.services : undefined;
-  if (!Array.isArray(services) || !services.every(isAffectedService)) {
-    throw new Error(`affected-services printed an unexpected verdict: ${result.stdout}`);
-  }
-  return services;
 }
 
 function workspaceChecks(path: string): Check[] {
@@ -113,7 +91,7 @@ function passes(check: Check): boolean {
 function checksFor(base: string, targets: readonly string[]): Check[] {
   const services = new Map<string, AffectedService>();
   for (const target of targets) {
-    for (const service of affectedServices(base, target)) services.set(service.path, service);
+    for (const service of affectedServicesBetween(base, target).services) services.set(service.path, service);
   }
   const names = [...services.values()].map(({ name }) => name).toSorted();
   console.log(`affected services: ${names.length === 0 ? "none" : names.join(", ")}`);

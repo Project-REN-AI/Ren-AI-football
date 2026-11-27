@@ -100,7 +100,7 @@ describe("skip cross-check CLI", () => {
     expect(tracker.issues[0]?.body).toContain("`catalog`");
     expect(tracker.issues[0]?.body).toContain("`unit`");
     expect(tracker.issues[0]?.body).toContain("`architecture`");
-    expect(tracker.issues[0]?.body).toContain(`${base}...${target}`);
+    expect(tracker.issues[0]?.body).toContain(`${base}..${target}`);
     expect(tracker.issues[0]?.body).toContain("scouting");
     expect(output).toContain("skipped catalog: opened #1");
   });
@@ -120,7 +120,35 @@ describe("skip cross-check CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(tracker.issues).toEqual([]);
-    expect(output).toBe("skip cross-check: no failure outside the affected services");
+    expect(output).toBe("skip-cross-check: no failure outside the affected services");
+  });
+
+  it("counts a service affected by any commit of the range, even when a later commit reverted it", async () => {
+    const base = commit("base");
+    write("services/catalog/src/Main.java", "class Main { int x; }\n");
+    commit("change catalog");
+    write("services/catalog/src/Main.java", "class Main {}\n");
+    const target = commit("revert catalog");
+
+    const { tracker } = await crossCheck(["--base", base, "--target", target, runResult(failure("catalog"))]);
+
+    expect(tracker.issues).toEqual([]);
+  });
+
+  it("ignores vulnerability and link failures, which no commit causes", async () => {
+    const base = commit("base");
+    write("services/scouting/app.py", "x = 2\n");
+    const target = commit("change scouting");
+
+    const { tracker } = await crossCheck([
+      "--base",
+      base,
+      "--target",
+      target,
+      runResult(failure("catalog", "govulncheck", "vulnerability"), failure("web", "lychee", "link")),
+    ]);
+
+    expect(tracker.issues).toEqual([]);
   });
 
   it("files nothing when a root change made every service affected", async () => {
@@ -163,7 +191,7 @@ describe("skip cross-check CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(tracker.issues).toEqual([]);
-    expect(output).toBe("skip cross-check: no commits between base and target");
+    expect(output).toBe("skip-cross-check: no commits between base and target");
   });
 
   it("gathers failures of the same service from several run results into one issue", async () => {

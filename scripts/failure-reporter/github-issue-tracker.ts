@@ -87,3 +87,21 @@ export class GitHubIssueTracker implements IssueTracker {
     return payload as T;
   }
 }
+
+function takeVariable(script: string, name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`${script}: missing environment variable ${name}`);
+    process.exit(1);
+  }
+  delete process.env[name];
+  return value;
+}
+
+/** Builds the tracker from GH_TOKEN and REPOSITORY, removing both from the environment; exits 1 if one is missing. */
+export function gitHubIssueTrackerFromEnvironment(script: string): GitHubIssueTracker {
+  return new GitHubIssueTracker({
+    token: takeVariable(script, "GH_TOKEN"),
+    repository: takeVariable(script, "REPOSITORY"),
+  });
+}

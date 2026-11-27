@@ -4,20 +4,10 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { type FailureSignature, type IssueTracker, signatureMarker, type TrackedIssue } from "./issue-tracker";
+import { type Failure, INFRASTRUCTURE, parseRunResult, type RunResult, SEED_VARIABLE } from "./run-result";
 
 const MAX_RERUNS = 3;
-const INFRASTRUCTURE = "infrastructure";
-const SEED_VARIABLE = "SCOUT_TEST_SEED";
 const OUTPUT_TAIL_CHARACTERS = 8_000;
-
-const FAILURE_FIELDS = ["service", "check", "kind", "seed", "reproduce"] as const;
-const RUN_FIELDS = ["layer", "sha", "runUrl"] as const;
-
-type Failure = Readonly<Record<(typeof FAILURE_FIELDS)[number], string>>;
-
-interface RunResult extends Readonly<Record<(typeof RUN_FIELDS)[number], string>> {
-  readonly failures: readonly Failure[];
-}
 
 type Classification = "ConfirmedFailure" | "FlakyTest";
 
@@ -33,7 +23,8 @@ const CLASSIFICATIONS: Readonly<Record<Classification, ClassificationReport>> = 
 };
 
 interface Rerun {
-  readonly passed: boolean;
+  readonly outcome: "passed" | "failed" | "infrastructure";
+  readonly exit: string;
   readonly output: string;
 }
 
@@ -53,65 +44,50 @@ export interface FailureReporterResult {
   readonly output: string;
 }
 
-function requireStrings<const K extends string>(
-  value: unknown,
-  fields: readonly K[],
-  path: (field: string) => string,
-): Record<K, string> & Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${path("")} must be a JSON object`);
-  }
-  const record = value as Record<string, unknown>;
-  for (const field of fields) {
-    if (typeof record[field] !== "string" || record[field] === "") {
-      throw new Error(`${path(field)} must be a non-empty string`);
-    }
-  }
-  return record as Record<K, string> & Record<string, unknown>;
-}
-
-function parseRunResult(raw: string): RunResult {
-  const run = requireStrings(JSON.parse(raw), RUN_FIELDS, (field) => field || "run result");
-  if (!Array.isArray(run.failures)) throw new Error("failures must be an array");
-  const failures = run.failures.map((failure: unknown, index) => {
-    const at = `failures[${index}]`;
-    const { service, check, kind, seed, reproduce } = requireStrings(failure, FAILURE_FIELDS, (field) =>
-      field ? `${at}.${field}` : at,
-    );
-    return { service, check, kind, seed, reproduce };
-  });
-  return { layer: run.layer, sha: run.sha, runUrl: run.runUrl, failures };
-}
-
 function failureSignatureOf({ service, check, kind }: Failure): FailureSignature {
   return createHash("sha256").update([service, check, kind].join("\n")).digest("hex").slice(0, 16) as FailureSignature;
 }
 
-function rerun({ reproduce, seed }: Failure): Rerun {
-  const result = spawnSync("sh", ["-c", reproduce], {
-    encoding: "utf8",
-    env: { ...process.env, [SEED_VARIABLE]: seed },
-  });
-  return { passed: result.status === 0, output: result.stdout + result.stderr };
+const RERUN_OUTPUT_BUFFER_BYTES = 64 * 1024 * 1024;
+
+function outcomeOf(status: number | null, failsOn: readonly number[] | undefined): Rerun["outcome"] {
+  if (status === 0) return "passed";
+  if (!failsOn) return "failed";
+  return status !== null && failsOn.includes(status) ? "failed" : "infrastructure";
 }
 
-function rerunUntilPass(failure: Failure): Rerun[] {
+function rerun({ reproduce, seed, failsOn }: Failure): Rerun {
+  const result = spawnSync("sh", ["-c", reproduce], {
+    encoding: "utf8",
+    maxBuffer: RERUN_OUTPUT_BUFFER_BYTES,
+    env: { ...process.env, [SEED_VARIABLE]: seed },
+  });
+  return {
+    outcome: outcomeOf(result.status, failsOn),
+    exit: result.status === null ? "by signal" : String(result.status),
+    output: result.stdout + result.stderr,
+  };
+}
+
+function rerunUntilSettled(failure: Failure): Rerun[] {
   const reruns: Rerun[] = [];
   while (reruns.length < MAX_RERUNS) {
     const attempt = rerun(failure);
     reruns.push(attempt);
-    if (attempt.passed) break;
+    if (attempt.outcome !== "failed") break;
   }
   return reruns;
 }
 
-function classify(run: RunResult, failure: Failure): Occurrence {
-  const reruns = rerunUntilPass(failure);
+function classify(run: RunResult, failure: Failure): Occurrence | Rerun {
+  const reruns = rerunUntilSettled(failure);
+  const infrastructure = reruns.find(({ outcome }) => outcome === "infrastructure");
+  if (infrastructure) return infrastructure;
   return {
     run,
     failure,
-    classification: reruns.some(({ passed }) => passed) ? "FlakyTest" : "ConfirmedFailure",
-    failingOutput: reruns.findLast(({ passed }) => !passed)?.output ?? "",
+    classification: reruns.some(({ outcome }) => outcome === "passed") ? "FlakyTest" : "ConfirmedFailure",
+    failingOutput: reruns.findLast(({ outcome }) => outcome === "failed")?.output ?? "",
   };
 }
 
@@ -136,7 +112,7 @@ function occurrenceDetails({ run, failure, failingOutput }: Occurrence): string[
     "",
     "## Reproduzir",
     "",
-    codeBlock(`${SEED_VARIABLE}=${failure.seed} ${failure.reproduce}`, "sh"),
+    codeBlock(`export ${SEED_VARIABLE}=${failure.seed}\n${failure.reproduce}`, "sh"),
     "",
     "## Saída",
     "",
@@ -205,6 +181,10 @@ export async function runFailureReporter(
       continue;
     }
     const occurrence = classify(run, failure);
+    if ("exit" in occurrence) {
+      lines.push(`${INFRASTRUCTURE} ${subject}: ignored, a rerun exited ${occurrence.exit}`);
+      continue;
+    }
     const outcome = await file(issueTracker, occurrence);
     lines.push(`${CLASSIFICATIONS[occurrence.classification].logWord} ${subject}: ${outcome}`);
   }

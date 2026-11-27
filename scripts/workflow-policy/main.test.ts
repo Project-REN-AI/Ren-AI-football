@@ -110,6 +110,31 @@ describe("workflow policy CLI", () => {
     expect(output).toContain(`ci.yml: top-level permissions not read-only (${grant})`);
   });
 
+  function scheduled(cron: string): string {
+    return workflow({ on: `schedule:\n    - cron: "${cron}"` });
+  }
+
+  it.each(["17 3 * * *", "7,22,37,52 * * * *"])("accepts a schedule off the turn of the hour (%s)", (cron) => {
+    const directory = workflowsDirectory({ "nightly.yml": scheduled(cron) });
+
+    const { exitCode, output } = runWorkflowPolicy(directory);
+
+    expect(output).toContain("workflow policy: ok");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["0 3 * * *", "00 * * * *", "0,30 * * * *", "*/15 * * * *", "* * * * *", "5-10 3 * * *"])(
+    "rejects a schedule whose minute is not a list of minutes off the turn of the hour (%s)",
+    (cron) => {
+      const directory = workflowsDirectory({ "nightly.yml": scheduled(cron) });
+
+      const { exitCode, output } = runWorkflowPolicy(directory);
+
+      expect(exitCode).toBe(1);
+      expect(output).toContain(`nightly.yml: schedule "${cron}" must list minutes from 1 to 59`);
+    },
+  );
+
   it("reports every violation of every workflow", () => {
     const directory = workflowsDirectory({
       "a.yml": workflow({ on: "pull_request_target:", permissions: "permissions: write-all" }),

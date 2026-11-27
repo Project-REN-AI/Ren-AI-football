@@ -230,7 +230,7 @@ jobs:
           docker build --file "$SERVICE_PATH/Dockerfile" --tag "$IMAGE" .
           docker run --detach --rm --name smoke --publish 3000:3000 "$IMAGE"
           for _ in $(seq 1 30); do
-            if curl --fail --silent --output /dev/null http://127.0.0.1:3000/; then
+            if curl --fail --silent --max-time 2 --output /dev/null http://127.0.0.1:3000/; then
               docker stop smoke
               exit 0
             fi

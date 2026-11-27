@@ -24,7 +24,7 @@ class PostgresIntegrationTest {
   static final PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
 
   @Test
-  void storesAndReadsBackAGreeting() throws SQLException {
+  void storesAndReadsBackGreeting() throws SQLException {
     try (Connection connection =
         DriverManager.getConnection(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {

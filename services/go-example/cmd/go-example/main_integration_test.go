@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	runtimeImage = "gcr.io/distroless/static-debian12:nonroot"
+	runtimeImage = "gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab"
 	binaryPath   = "/go-example"
 	httpPort     = "8080/tcp"
 )
@@ -27,14 +27,25 @@ func TestServiceGreetsOverHTTPInsideAContainer(t *testing.T) {
 
 	baseURL := startService(t)
 
-	status, body := get(t, baseURL+"/greetings?name=Scout")
-	if status != http.StatusOK || body != "Hello, Scout!" {
-		t.Errorf("GET /greetings?name=Scout = %d %q, want %d %q", status, body, http.StatusOK, "Hello, Scout!")
+	cases := []struct {
+		name       string
+		query      string
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "addresses the name", query: "name=Scout", wantStatus: http.StatusOK, wantBody: "Hello, Scout!"},
+		{name: "rejects a blank name", query: "name=%20", wantStatus: http.StatusBadRequest, wantBody: "name is blank\n"},
 	}
 
-	status, _ = get(t, baseURL+"/greetings?name=%20")
-	if status != http.StatusBadRequest {
-		t.Errorf("GET /greetings?name=%%20 = %d, want %d", status, http.StatusBadRequest)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			status, body := getText(t, baseURL+"/greetings?"+tc.query)
+			if status != tc.wantStatus || body != tc.wantBody {
+				t.Errorf("GET /greetings?%s = %d %q, want %d %q", tc.query, status, body, tc.wantStatus, tc.wantBody)
+			}
+		})
 	}
 }
 
@@ -85,7 +96,7 @@ func buildLinuxBinary(t *testing.T) string {
 	return binary
 }
 
-func get(t *testing.T, url string) (int, string) {
+func getText(t *testing.T, url string) (int, string) {
 	t.Helper()
 
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, nil)

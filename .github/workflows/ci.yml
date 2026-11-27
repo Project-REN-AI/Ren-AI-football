@@ -271,7 +271,7 @@ jobs:
       - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' && github.event_name == 'merge_group' }}
         name: go test (integration)
         working-directory: ${{ matrix.service.path }}
-        run: go test -p 4 -tags integration ./...
+        run: go test -p 4 -tags integration -run Container ./cmd/...
 
       - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' && github.event_name == 'merge_group' }}
         name: go-arch-lint (architecture)

@@ -205,7 +205,7 @@ jobs:
 
       - if: ${{ !contains(fromJSON('["typescript", "python", "java", "go"]'), matrix.service.language) }}
         run: |
-          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
+          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml and to scripts/pre-push"
           exit 1
         env:
           LANGUAGE: ${{ matrix.service.language }}
@@ -316,6 +316,11 @@ jobs:
       - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' }}
         working-directory: ${{ matrix.service.path }}
         run: go test -p 4 ./...
+
+      - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: go test (integration)
+        working-directory: ${{ matrix.service.path }}
+        run: go test -p 4 -tags integration -run Container ./cmd/...
 
       - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' && github.event_name == 'merge_group' }}
         name: go-arch-lint (architecture)

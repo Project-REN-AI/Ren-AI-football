@@ -318,7 +318,7 @@ jobs:
           if [ "$EVENT_NAME" = merge_group ]; then
             ./mvnw --batch-mode --no-transfer-progress test
           else
-            ./mvnw --batch-mode --no-transfer-progress test -DexcludedGroups=architecture
+            ./mvnw --batch-mode --no-transfer-progress test -DexcludedGroups=architecture,integration
           fi
         env:
           EVENT_NAME: ${{ github.event_name }}

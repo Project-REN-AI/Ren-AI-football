@@ -1,0 +1,66 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "timezone": "America/Sao_Paulo",
+  "schedule": ["* 0-5 * * 1"],
+  "automerge": false,
+  "platformAutomerge": false,
+  "dependencyDashboard": { "enabled": true },
+  "semanticCommits": "enabled",
+  "enabledManagers": [
+    "bun",
+    "maven",
+    "maven-wrapper",
+    "pep621",
+    "gomod",
+    "dockerfile",
+    "docker-compose",
+    "github-actions"
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "schedule": ["at any time"],
+    "automerge": false
+  },
+  "postUpdateOptions": ["gomodTidy"],
+  "packageRules": [
+    {
+      "description": "Bun/npm workspaces (web/, scripts/, bun.lock)",
+      "matchManagers": ["bun"],
+      "groupName": "bun dependencies",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Bun runtime: packageManager, the oven/bun image and @types/bun move together, only by PR (ADR-0003)",
+      "matchPackageNames": ["bun", "oven/bun", "@types/bun"],
+      "groupName": "bun runtime",
+      "semanticCommitScope": "bun"
+    },
+    {
+      "matchManagers": ["maven", "maven-wrapper"],
+      "groupName": "maven dependencies",
+      "semanticCommitScope": "java"
+    },
+    {
+      "matchManagers": ["pep621"],
+      "groupName": "uv dependencies",
+      "semanticCommitScope": "python"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "groupName": "go modules",
+      "semanticCommitScope": "go"
+    },
+    {
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "matchPackageNames": ["!oven/bun"],
+      "groupName": "docker images",
+      "semanticCommitScope": "docker"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions",
+      "semanticCommitScope": "ci"
+    }
+  ]
+}

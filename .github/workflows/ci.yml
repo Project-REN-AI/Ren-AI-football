@@ -28,6 +28,11 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
       - run: bun install --frozen-lockfile
 
       - run: bun run --cwd scripts format:check
@@ -211,6 +216,12 @@ jobs:
           bun-version-file: package.json
 
       - if: ${{ matrix.service.language == 'typescript' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - if: ${{ matrix.service.language == 'typescript' }}
         run: bun install --frozen-lockfile
 
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'static' }}
@@ -221,6 +232,14 @@ jobs:
 
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
         run: bun run --cwd "$SERVICE_PATH" test
+
+      - if: ${{ matrix.service.language == 'go' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
 
       - if: ${{ matrix.service.language == 'go' }}
         name: Install Go
@@ -282,6 +301,13 @@ jobs:
         with:
           version: "0.11.32"
           enable-cache: false
+          cache-local-path: ${{ runner.temp }}/uv-cache
+
+      - if: ${{ matrix.service.language == 'python' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
 
       - if: ${{ matrix.service.language == 'python' }}
         working-directory: ${{ matrix.service.path }}
@@ -307,6 +333,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+
+      - if: ${{ matrix.service.language == 'java' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/.mvn/wrapper/maven-wrapper.properties') }}
 
       - if: ${{ matrix.service.language == 'java' && matrix.category == 'static' }}
         working-directory: ${{ matrix.service.path }}

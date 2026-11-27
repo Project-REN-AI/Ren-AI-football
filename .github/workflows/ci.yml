@@ -28,6 +28,11 @@ jobs:
         with:
           bun-version-file: package.json
 
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
       - run: bun install --frozen-lockfile
 
       - run: bun run --cwd scripts format:check
@@ -215,6 +220,12 @@ jobs:
           bun-version-file: package.json
 
       - if: ${{ matrix.service.language == 'typescript' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - if: ${{ matrix.service.language == 'typescript' }}
         run: bun install --frozen-lockfile
 
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'static' }}
@@ -233,11 +244,24 @@ jobs:
         run: bun run --cwd "$SERVICE_PATH" test
 
       - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
-        name: image build and smoke (Node LTS)
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: image build (Node LTS)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.service.path }}/Dockerfile
+          load: true
+          push: false
+          tags: scout-${{ matrix.service.name }}:ci
+          cache-from: type=gha,scope=image-${{ matrix.service.name }}
+
+      - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: image smoke (Node LTS)
         env:
           IMAGE: scout-${{ matrix.service.name }}:ci
         run: |
-          docker build --file "$SERVICE_PATH/Dockerfile" --tag "$IMAGE" .
           docker run --detach --rm --name smoke --publish 3000:3000 "$IMAGE"
           for _ in $(seq 1 30); do
             if curl --fail --silent --max-time 2 --output /dev/null http://127.0.0.1:3000/; then
@@ -248,6 +272,14 @@ jobs:
           done
           docker logs smoke
           exit 1
+
+      - if: ${{ matrix.service.language == 'go' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
 
       - if: ${{ matrix.service.language == 'go' }}
         name: Install Go
@@ -314,10 +346,19 @@ jobs:
         with:
           version: "0.11.32"
           enable-cache: false
+          cache-local-path: ${{ runner.temp }}/uv-cache
+
+      - if: ${{ matrix.service.language == 'python' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
 
       - if: ${{ matrix.service.language == 'python' }}
         working-directory: ${{ matrix.service.path }}
-        run: uv sync --locked
+        run: |
+          [ "$(uv cache dir)" = "$RUNNER_TEMP/uv-cache" ] || { echo "uv cache dir is $(uv cache dir), not $RUNNER_TEMP/uv-cache" >&2; exit 1; }
+          uv sync --locked
 
       - if: ${{ matrix.service.language == 'python' && matrix.category == 'static' }}
         working-directory: ${{ matrix.service.path }}
@@ -344,6 +385,14 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
+
+      - if: ${{ matrix.service.language == 'java' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/.mvn/wrapper/maven-wrapper.properties') }}
 
       - if: ${{ matrix.service.language == 'java' && matrix.category == 'static' }}
         working-directory: ${{ matrix.service.path }}

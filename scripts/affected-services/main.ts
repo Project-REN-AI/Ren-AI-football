@@ -94,11 +94,11 @@ function touches(service: Service, file: string): boolean {
   return isWithin(file, service.path) || service.dependsOn.some((dependency) => isWithin(file, dependency));
 }
 
-function affectedServices(base: string, target: string): AffectedServices {
-  const services = serviceDirectories(target).map((directory) => readService(target, directory));
-  const files = changedPaths(base, target);
-  const all = files.some((file) => !services.some((service) => touches(service, file)));
-  const affected = all ? services : services.filter((service) => files.some((file) => touches(service, file)));
+function servicesAt(target: string): Service[] {
+  return serviceDirectories(target).map((directory) => readService(target, directory));
+}
+
+function verdict(all: boolean, affected: readonly Service[]): AffectedServices {
   return {
     all,
     services: affected
@@ -107,21 +107,36 @@ function affectedServices(base: string, target: string): AffectedServices {
   };
 }
 
+function affectedServices(base: string, target: string): AffectedServices {
+  const services = servicesAt(target);
+  const files = changedPaths(base, target);
+  const all = files.some((file) => !services.some((service) => touches(service, file)));
+  return verdict(all, all ? services : services.filter((service) => files.some((file) => touches(service, file))));
+}
+
 function describe({ all, services }: AffectedServices): string {
   if (services.length === 0) return "affected services: none";
   const names = services.map(({ name }) => name).join(", ");
   return all ? `affected services: all, the monorepo root changed (${names})` : `affected services: ${names}`;
 }
 
+const USAGE =
+  "usage: affected-services [--json] <base-ref> <target-ref> | affected-services [--json] --all <target-ref>";
+
 const args = process.argv.slice(2);
 const json = args.includes("--json");
-const refs = args.filter((arg) => arg !== "--json");
+const everyService = args.includes("--all");
+const refs = args.filter((arg) => arg !== "--json" && arg !== "--all");
 
 try {
-  if (refs.length !== 2) throw new Error("usage: affected-services [--json] <base-ref> <target-ref>");
-  const [base = "", target = ""] = refs;
-  const affected = affectedServices(base, target);
-  console.log(json ? JSON.stringify(affected) : describe(affected));
+  if (refs.length !== (everyService ? 1 : 2)) throw new Error(USAGE);
+  const [first = "", second = ""] = refs;
+  const affected = everyService ? verdict(true, servicesAt(first)) : affectedServices(first, second);
+  if (json) console.log(JSON.stringify(affected));
+  else
+    console.log(
+      everyService ? `services: ${affected.services.map(({ name }) => name).join(", ")}` : describe(affected),
+    );
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

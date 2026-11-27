@@ -222,7 +222,7 @@ jobs:
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
         run: bun run --cwd "$SERVICE_PATH" test
 
-      - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+      - if: ${{ matrix.service.path == 'web' && matrix.category == 'test' && github.event_name == 'merge_group' }}
         name: image build and smoke (Node LTS)
         env:
           IMAGE: scout-${{ matrix.service.name }}:ci

@@ -18,7 +18,7 @@ O Scout reproduz partidas reais em tempo real a partir dos eventos de cada lance
 
 Microsserviços em Java (Spring Boot), Python (FastAPI), Go e TypeScript (Next.js), comunicando por REST, gRPC e eventos no Kafka. Cada tipo de dado fica no banco que serve a ele: PostgreSQL, Cassandra, MongoDB, Redis, Qdrant, OpenSearch e armazenamento de objetos compatível com S3.
 
-O escopo, os domínios e os marcos estão em [`requisitos.md`](./requisitos.md). A linguagem do domínio está em [`GLOSSARY.md`](./GLOSSARY.md). As decisões estão em [`docs/adr/`](./docs/adr/).
+O escopo, os domínios e os marcos estão em [`requisitos.md`](./requisitos.md). A linguagem do domínio está em [`GLOSSARY.md`](./GLOSSARY.md). As decisões estão em [`docs/adr/`](./docs/adr/). O ambiente local, com um profile do Docker Compose por fluxo de trabalho, está em [`docs/compose.md`](./docs/compose.md).
 
 ## Estado
 

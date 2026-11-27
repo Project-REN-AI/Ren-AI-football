@@ -59,3 +59,6 @@ mlruns/
 # TLA+ (estados gerados pelo TLC)
 states/
 *.tlc_out
+
+# Next.js: gerado pelo next dev/build
+next-env.d.ts

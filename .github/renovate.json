@@ -4,28 +4,16 @@
   "timezone": "America/Sao_Paulo",
   "schedule": ["* 0-5 * * 1"],
   "automerge": false,
-  "platformAutomerge": false,
-  "dependencyDashboard": { "enabled": true },
   "semanticCommits": "enabled",
-  "enabledManagers": [
-    "bun",
-    "maven",
-    "maven-wrapper",
-    "pep621",
-    "gomod",
-    "dockerfile",
-    "docker-compose",
-    "github-actions"
-  ],
+  "npm": { "enabled": false },
   "vulnerabilityAlerts": {
     "enabled": true,
-    "schedule": ["at any time"],
-    "automerge": false
+    "schedule": ["at any time"]
   },
   "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
-      "description": "Bun/npm workspaces (web/, scripts/, bun.lock)",
+      "description": "Bun workspaces web/ and scripts/ with bun.lock",
       "matchManagers": ["bun"],
       "groupName": "bun dependencies",
       "semanticCommitScope": "deps"

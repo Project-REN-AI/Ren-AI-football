@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { readFileSync } from "node:fs";
+import { parseArgs } from "node:util";
 
 interface Vulnerability {
   readonly key: string;
@@ -39,7 +40,7 @@ function parsePackage(entry: Record<string, unknown>, where: string): Package {
   };
 }
 
-function readVulnerabilities(path: string): Vulnerability[] {
+function readOsvScannerReport(path: string): Vulnerability[] {
   const report: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!isRecord(report)) throw new Error(`${path} is not an osv-scanner JSON report`);
   return arrayField(report, "results", path).flatMap((source) => {
@@ -55,14 +56,86 @@ function readVulnerabilities(path: string): Vulnerability[] {
   });
 }
 
+function jsonStream(text: string, path: string): unknown[] {
+  const values: unknown[] = [];
+  let depth = 0;
+  let start = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === "{") {
+      if (depth === 0) start = index;
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0) values.push(JSON.parse(text.slice(start, index + 1)));
+    } else if (depth === 0 && char !== undefined && char.trim() !== "") {
+      throw new Error(`${path} is not a stream of JSON objects`);
+    }
+  }
+  if (depth !== 0) throw new Error(`${path} ends in the middle of a JSON object`);
+  return values;
+}
+
+function readGovulncheckReport(path: string): Vulnerability[] {
+  return jsonStream(readFileSync(path, "utf8"), path).flatMap((message) => {
+    const finding = isRecord(message) ? message["finding"] : undefined;
+    if (!isRecord(finding)) return [];
+    const osv = stringField(finding, "osv", `${path}: finding`);
+    const [vulnerable] = arrayField(finding, "trace", `${path}: finding ${osv}`);
+    if (!isRecord(vulnerable)) throw new Error(`${path}: finding ${osv} has no trace`);
+    if (typeof vulnerable["function"] !== "string") return [];
+    const module = stringField(vulnerable, "module", `${path}: finding ${osv} trace`);
+    const version = typeof vulnerable["version"] === "string" ? vulnerable["version"] : "";
+    return [{ key: `Go/${module}: ${osv}`, description: `Go/${module}@${version}: ${osv}` }];
+  });
+}
+
+const READERS = { "osv-scanner": readOsvScannerReport, govulncheck: readGovulncheckReport } as const;
+
+function isFormat(value: string): value is keyof typeof READERS {
+  return value in READERS;
+}
+
+interface CommandLine {
+  readonly format: keyof typeof READERS;
+  readonly basePath: string;
+  readonly headPath: string;
+}
+
+function parseCommandLine(): CommandLine | undefined {
+  const { values, positionals } = parseArgs({
+    options: { format: { type: "string", default: "osv-scanner" } },
+    allowPositionals: true,
+  });
+  const [basePath, headPath, ...extra] = positionals;
+  if (basePath === undefined || headPath === undefined || extra.length > 0 || !isFormat(values.format))
+    return undefined;
+  return { format: values.format, basePath, headPath };
+}
+
 function fail(lines: readonly string[]): never {
   for (const line of lines) console.log(line);
   process.exit(1);
 }
 
-const [basePath, headPath] = process.argv.slice(2);
-if (basePath === undefined || headPath === undefined)
-  fail(["new vulnerabilities: usage: new-vulns <base-report.json> <head-report.json>"]);
+const USAGE = "new vulnerabilities: usage: new-vulns [--format osv-scanner|govulncheck] <base-report> <head-report>";
+
+let commandLine: CommandLine | undefined;
+try {
+  commandLine = parseCommandLine();
+} catch {
+  fail([USAGE]);
+}
+if (commandLine === undefined) fail([USAGE]);
+const { format, basePath, headPath } = commandLine;
+const readVulnerabilities = READERS[format];
 
 let base: Vulnerability[];
 let head: Vulnerability[];
@@ -79,4 +152,4 @@ const introduced = [...new Set(head.filter(({ key }) => !known.has(key)).map(({ 
 if (introduced.length > 0)
   fail([`new vulnerabilities: ${introduced.length}`, ...introduced.map((line) => `  ${line}`)]);
 
-console.log(`new vulnerabilities: 0 (${head.length} already in the base)`);
+console.log(`new vulnerabilities: 0 (${new Set(head.map(({ key }) => key)).size} already in the base)`);

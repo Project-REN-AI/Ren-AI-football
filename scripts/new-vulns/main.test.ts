@@ -32,13 +32,17 @@ function osvReport(findings: readonly Finding[]): string {
   });
 }
 
-function runNewVulns(base: string, head: string): { exitCode: number | null; output: string } {
+function runNewVulns(
+  base: string,
+  head: string,
+  options: readonly string[] = [],
+): { exitCode: number | null; output: string } {
   const dir = mkdtempSync(join(tmpdir(), "new-vulns-"));
   const basePath = join(dir, "base.json");
   const headPath = join(dir, "head.json");
   writeFileSync(basePath, base);
   writeFileSync(headPath, head);
-  const result = spawnSync("bun", [CLI, basePath, headPath], { encoding: "utf8" });
+  const result = spawnSync("bun", [CLI, ...options, basePath, headPath], { encoding: "utf8" });
   rmSync(dir, { recursive: true });
   return { exitCode: result.status, output: result.stdout + result.stderr };
 }
@@ -124,5 +128,95 @@ describe("new vulnerabilities CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(output).toContain("head.json: package.ecosystem is not a string");
+  });
+});
+
+interface GoFinding {
+  readonly osv: string;
+  readonly module: string;
+  readonly version: string;
+  readonly reach: "module" | "package" | "symbol";
+}
+
+function govulncheckStream(findings: readonly GoFinding[]): string {
+  const messages: unknown[] = [
+    { config: { protocol_version: "v1.0.0", scanner_name: "govulncheck", scan_level: "symbol" } },
+    ...findings.map(({ osv, module, version, reach }) => {
+      const frame = { module, version };
+      const vulnerable =
+        reach === "module"
+          ? frame
+          : reach === "package"
+            ? { ...frame, package: module }
+            : { ...frame, package: module, function: "Get", receiver: "Result" };
+      const trace = reach === "symbol" ? [vulnerable, { module: "example.com/app", function: "main" }] : [vulnerable];
+      return { finding: { osv, fixed_version: "v9.9.9", trace } };
+    }),
+  ];
+  return messages.map((message) => JSON.stringify(message, undefined, 2)).join("\n");
+}
+
+const GJSON_CALLED: GoFinding = {
+  osv: "GO-2021-0265",
+  module: "github.com/tidwall/gjson",
+  version: "v1.6.5",
+  reach: "symbol",
+};
+
+describe("new vulnerabilities CLI on govulncheck reports", () => {
+  const GOVULNCHECK = ["--format", "govulncheck"];
+
+  it("is red and names a called vulnerability the head introduced", () => {
+    const { exitCode, output } = runNewVulns("", govulncheckStream([GJSON_CALLED]), GOVULNCHECK);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("new vulnerabilities: 1");
+    expect(output).toContain("Go/github.com/tidwall/gjson@v1.6.5: GO-2021-0265");
+  });
+
+  it("is green when the vulnerable code is required or imported but never called", () => {
+    const { exitCode, output } = runNewVulns(
+      "",
+      govulncheckStream([
+        { ...GJSON_CALLED, reach: "module" },
+        { ...GJSON_CALLED, reach: "package" },
+      ]),
+      GOVULNCHECK,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("new vulnerabilities: 0");
+  });
+
+  it("is green when a version bump keeps a called vulnerability the base already had", () => {
+    const { exitCode, output } = runNewVulns(
+      govulncheckStream([GJSON_CALLED]),
+      govulncheckStream([{ ...GJSON_CALLED, version: "v1.6.6" }]),
+      GOVULNCHECK,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain("new vulnerabilities: 0 (1 already in the base)");
+  });
+
+  it("is red when a report is not a govulncheck JSON stream", () => {
+    const { exitCode, output } = runNewVulns("", "Scanning your code", GOVULNCHECK);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("unreadable report");
+  });
+
+  it("is red and says which finding has no trace", () => {
+    const { exitCode, output } = runNewVulns("", '{"finding": {"osv": "GO-2021-0265", "trace": []}}', GOVULNCHECK);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("head.json: finding GO-2021-0265 has no trace");
+  });
+
+  it("is red on a format it does not know", () => {
+    const { exitCode, output } = runNewVulns("", "", ["--format", "sarif"]);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("usage");
   });
 });

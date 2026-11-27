@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+version: 3
+workdir: .
+
+excludeFiles:
+  - '_test\.go$'
+
+allow:
+  depOnAnyVendor: false
+  deepScan: true
+
+components:
+  domain:
+    in: internal/domain/**
+  adapter:
+    in: internal/adapter/**
+  main:
+    in: cmd/**
+
+deps:
+  adapter:
+    mayDependOn:
+      - domain
+  main:
+    mayDependOn:
+      - adapter

@@ -27,3 +27,7 @@ O TypeScript do Scout usa o Bun para instalar dependências (`bun install --froz
 - O Dependabot não abre PR de segurança para Bun, então as dependências são atualizadas pelo **Renovate** (app hospedado), que entende `bun.lock` e workspaces e cobre também Maven, uv, Go, Docker e Actions.
 - Desenvolvimento e produção usam runtimes diferentes (Bun e Node). Todo teste que depende de runtime roda contra o build de produção na C2.
 - Subir a versão do Bun é uma mudança que se revisa, não uma atualização automática qualquer.
+
+## Emendas
+
+- 2026-11-27: as dependências passaram a ser atualizadas pelo Dependabot, e não mais pelo Renovate ([ADR-0007](0007-dependabot-no-lugar-do-renovate.md)).

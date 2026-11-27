@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# See docs/adr/0007-dependabot-no-lugar-do-renovate.md
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      bun:
+        patterns: ["*"]
+
+  - package-ecosystem: maven
+    directory: /services/java-example
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      maven:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /services/python-example
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      uv:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /services/go-example
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      gomod:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      docker:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      github-actions:
+        patterns: ["*"]

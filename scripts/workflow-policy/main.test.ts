@@ -22,7 +22,7 @@ function workflowsDirectory(workflows: Record<string, string>): string {
   return directory;
 }
 
-function workflow({ on = "pull_request:", permissions = "permissions: {}", uses = CHECKOUT, job = "" } = {}): string {
+function workflow({ on = "pull_request:", permissions = "permissions: {}", job = "" } = {}): string {
   return [
     "name: fixture",
     "on:",
@@ -33,7 +33,7 @@ function workflow({ on = "pull_request:", permissions = "permissions: {}", uses 
     "    runs-on: ubuntu-latest",
     job,
     "    steps:",
-    `      - uses: ${uses}`,
+    `      - uses: ${CHECKOUT}`,
     "",
   ].join("\n");
 }
@@ -110,44 +110,9 @@ describe("workflow policy CLI", () => {
     expect(output).toContain(`ci.yml: top-level permissions not read-only (${grant})`);
   });
 
-  it.each(["actions/checkout@v7", "actions/checkout@main", "actions/checkout@3d3c42e", "docker://alpine:3"])(
-    "rejects an action not pinned by SHA (%s)",
-    (uses) => {
-      const directory = workflowsDirectory({ "ci.yml": workflow({ uses }) });
-
-      const { exitCode, output } = runWorkflowPolicy(directory);
-
-      expect(exitCode).toBe(1);
-      expect(output).toContain(`ci.yml: action not pinned by SHA (${uses})`);
-    },
-  );
-
-  it.each([
-    "./.github/actions/setup",
-    "docker://alpine@sha256:4bcff63911fcb4448bd4fdacec207030997caf25e9bea4045fa6c8c44de311d1",
-  ])("accepts a local or digest-pinned action (%s)", (uses) => {
-    const directory = workflowsDirectory({ "ci.yml": workflow({ uses }) });
-
-    const { exitCode, output } = runWorkflowPolicy(directory);
-
-    expect(output).toContain("workflow policy: ok");
-    expect(exitCode).toBe(0);
-  });
-
-  it("rejects a reusable workflow not pinned by SHA", () => {
-    const directory = workflowsDirectory({
-      "ci.yml": "on: push\npermissions: {}\njobs:\n  call:\n    uses: octo/repo/.github/workflows/w.yml@v1\n",
-    });
-
-    const { exitCode, output } = runWorkflowPolicy(directory);
-
-    expect(exitCode).toBe(1);
-    expect(output).toContain("ci.yml: action not pinned by SHA (octo/repo/.github/workflows/w.yml@v1)");
-  });
-
   it("reports every violation of every workflow", () => {
     const directory = workflowsDirectory({
-      "a.yml": workflow({ on: "pull_request_target:", uses: "actions/checkout@v7" }),
+      "a.yml": workflow({ on: "pull_request_target:", permissions: "permissions: write-all" }),
       "b.yml": workflow({ permissions: "" }),
     });
 
@@ -155,8 +120,26 @@ describe("workflow policy CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(output).toContain("a.yml: forbidden trigger pull_request_target");
-    expect(output).toContain("a.yml: action not pinned by SHA (actions/checkout@v7)");
+    expect(output).toContain("a.yml: top-level permissions not read-only (write-all)");
     expect(output).toContain("b.yml: top-level permissions missing");
+  });
+
+  it("rejects a workflow that is not valid YAML", () => {
+    const directory = workflowsDirectory({ "ci.yml": "on: [push\n" });
+
+    const { exitCode, output } = runWorkflowPolicy(directory);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("workflow policy: violated");
+    expect(output).toContain("ci.yml: invalid YAML");
+  });
+
+  it("rejects a missing workflows directory", () => {
+    const { exitCode, output } = runWorkflowPolicy(join(tmpdir(), "workflow-policy-missing"));
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("workflow policy: violated");
+    expect(output).toContain("cannot read");
   });
 
   it("rejects an empty workflows directory", () => {

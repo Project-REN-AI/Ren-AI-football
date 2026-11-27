@@ -35,7 +35,7 @@ function pushedBranchTargets(stdin: string): string[] {
   const targets = stdin
     .split("\n")
     .map((line) => line.trim().split(/\s+/))
-    .filter(([localRef = "", sha = ""]) => localRef.startsWith("refs/heads/") && !/^0+$/.test(sha))
+    .filter(([, sha = "", remoteRef = ""]) => remoteRef.startsWith("refs/heads/") && !/^0+$/.test(sha))
     .map(([, sha = ""]) => sha);
   return [...new Set(targets)];
 }
@@ -61,8 +61,15 @@ function workspaceChecks(path: string): Check[] {
   return WORKSPACE_SCRIPTS.map((name) => ({ command: ["bun", "run", "--cwd", path, name] }));
 }
 
+function uvChecks(path: string): Check[] {
+  const commands = [["ruff", "format", "--check", "."], ["ruff", "check", "."], ["mypy", "src", "tests"], ["pytest"]];
+  return commands.map((command) => ({ command: ["uv", "--directory", path, "run", "--locked", ...command] }));
+}
+
 function serviceChecks({ path, language }: AffectedService): Check[] {
-  return language === "typescript" ? workspaceChecks(path) : [{ unsupportedLanguage: language }];
+  if (language === "typescript") return workspaceChecks(path);
+  if (language === "python") return uvChecks(path);
+  return [{ unsupportedLanguage: language }];
 }
 
 function describeCheck(check: Check): string {

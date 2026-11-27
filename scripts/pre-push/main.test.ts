@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,7 +50,8 @@ function stubScripts(prefix: string, overrides: Record<string, string> = {}): st
 }
 
 function prePush(stdin: string, ...args: string[]): { exitCode: number | null; output: string } {
-  const result = spawnSync("bun", [CLI, ...args], { cwd: repo, encoding: "utf8", input: stdin });
+  const env = { ...process.env, PATH: `${join(repo, ".fake-bin")}:${process.env["PATH"] ?? ""}` };
+  const result = spawnSync("bun", [CLI, ...args], { cwd: repo, encoding: "utf8", input: stdin, env });
   return { exitCode: result.status, output: result.stdout + result.stderr };
 }
 
@@ -64,6 +65,9 @@ beforeEach(() => {
   git("config", "user.email", "fixture@example.com");
   git("config", "user.name", "fixture");
   git("config", "commit.gpgsign", "false");
+  write(".git/info/exclude", ".fake-bin/\n");
+  write(".fake-bin/uv", '#!/bin/sh\necho "ran uv $*"\n');
+  chmodSync(join(repo, ".fake-bin/uv"), 0o755);
   write("package.json", "{}\n");
   write("compose.yaml", "services: {}\n");
   write(".github/workflows/ci.yml", WORKFLOW);
@@ -73,6 +77,8 @@ beforeEach(() => {
   write("web/app.ts", "export const x = 1;\n");
   write("services/scouting/service.json", JSON.stringify({ language: "python", dependsOn: [] }));
   write("services/scouting/app.py", "x = 1\n");
+  write("services/matching/service.json", JSON.stringify({ language: "go", dependsOn: [] }));
+  write("services/matching/main.go", "package main\n");
 });
 
 afterEach(() => {
@@ -93,7 +99,7 @@ describe("pre-push CLI", () => {
     expect(output).toContain("compose budget: ok");
     for (const check of ["format:check", "typecheck", "lint", "test"]) expect(output).toContain(`ran web ${check}`);
     expect(output).toContain("affected services: web");
-    expect(output).not.toContain("python");
+    expect(output).not.toContain("scouting");
     expect(exitCode).toBe(0);
   });
 
@@ -109,16 +115,41 @@ describe("pre-push CLI", () => {
     expect(output).not.toContain("pre-push failed: bun run --cwd web test");
   });
 
-  it("fails like CI for an affected service whose language has no CI path yet", () => {
+  it("runs the C1 checks of an affected Python service through uv, as CI does", () => {
     const base = commit("base");
     write("services/scouting/app.py", "x = 2\n");
     const target = commit("change scouting");
 
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
-    expect(exitCode).toBe(1);
-    expect(output).toContain("no CI path for python services yet");
+    for (const command of ["ruff format --check .", "ruff check .", "mypy src tests", "pytest"]) {
+      expect(output).toContain(`ran uv --directory services/scouting run --locked ${command}`);
+    }
+    expect(output).not.toContain("lint-imports");
     expect(output).not.toContain("ran web");
+    expect(exitCode).toBe(0);
+  });
+
+  it("fails like CI for an affected service whose language has no CI path yet", () => {
+    const base = commit("base");
+    write("services/matching/main.go", "package main\n\nfunc main() {}\n");
+    const target = commit("change matching");
+
+    const { exitCode, output } = prePush(pushLine(target), "--base", base);
+
+    expect(exitCode).toBe(1);
+    expect(output).toContain("no CI path for go services yet");
+    expect(output).not.toContain("ran web");
+  });
+
+  it("checks a push of HEAD, which git reports without a local branch ref", () => {
+    const base = commit("base");
+    write("web/app.ts", "export const x = 2;\n");
+    const target = commit("change web");
+
+    const { output } = prePush(`HEAD ${target} refs/heads/feat/x ${ZERO}\n`, "--base", base);
+
+    expect(output).toContain("ran web test");
   });
 
   it("checks every service when the monorepo root changed", () => {
@@ -128,9 +159,10 @@ describe("pre-push CLI", () => {
 
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
-    expect(output).toContain("affected services: scouting, web");
+    expect(output).toContain("affected services: matching, scouting, web");
     expect(output).toContain("ran web test");
-    expect(output).toContain("no CI path for python services yet");
+    expect(output).toContain("ran uv --directory services/scouting run --locked pytest");
+    expect(output).toContain("no CI path for go services yet");
     expect(exitCode).toBe(1);
   });
 

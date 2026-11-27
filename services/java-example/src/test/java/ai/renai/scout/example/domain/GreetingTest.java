@@ -19,7 +19,7 @@ class GreetingTest {
   }
 
   @Test
-  void rejectsABlankName() {
+  void rejectsBlankName() {
     assertThatIllegalArgumentException().isThrownBy(() -> Greeting.to("   "));
   }
 }

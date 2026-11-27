@@ -93,3 +93,25 @@ _Avoid_: Provedor (sozinho, colide com provedor de LLM), feed
 O conteúdo de uma Fonte de Dados guardado exatamente como chegou, antes de qualquer normalização.
 _Código_: `RawRecord`
 _Avoid_: Dump
+
+## Engenharia
+
+**Serviço Afetado**:
+Serviço cujo diretório ou dependência declarada mudou num conjunto de commits. Uma mudança fora de qualquer serviço, na raiz do monorepo, torna todos os serviços afetados.
+_Código_: `AffectedService`
+_Avoid_: Serviço alterado, serviço impactado
+
+**Falha Confirmada**:
+Falha encontrada pela caça de hora em hora ou pela suíte noturna que se repetiu em todas as reexecuções com a mesma seed. É o que vira issue pronta para o loop autônomo.
+_Código_: `ConfirmedFailure`
+_Avoid_: Bug do CI, quebra, build vermelho
+
+**Teste Instável**:
+Teste que falhou e depois passou ao ser reexecutado com a mesma seed. Não é **Falha Confirmada**: precisa de triagem para decidir se o defeito está no teste ou no código.
+_Código_: `FlakyTest`
+_Avoid_: Teste quebrado, teste aleatório
+
+**Assinatura de Falha**:
+Identidade estável de uma **Falha Confirmada** ou de um **Teste Instável**: o serviço, o teste ou a checagem, e o tipo da falha. Duas ocorrências com a mesma assinatura são a mesma falha.
+_Código_: `FailureSignature`
+_Avoid_: Hash do erro, fingerprint

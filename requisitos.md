@@ -89,7 +89,7 @@ Monorepo, ambiente local que sobe com um comando, CI em todo PR e as regras de b
 
 - Estrutura do monorepo e Docker Compose com profiles, para caber na restrição C02.
 - CI no GitHub Actions; merge queue na `develop`; `main` só por PR de release.
-- Formatadores e linters por linguagem, pre-commit, Dependabot.
+- Formatadores e linters por linguagem, pre-commit, Renovate.
 - Convenção de idioma, de commits e de registro de decisões.
 
 ## §2 Contrato de erro e observabilidade básica

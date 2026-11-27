@@ -57,6 +57,10 @@ jobs:
       - name: check-comments (added lines)
         run: bun scripts/check-comments/main.ts --base "$BASE_SHA"
 
+      - run: bun install --frozen-lockfile
+
+      - run: bun run knip
+
       - name: Install gitleaks and osv-scanner
         env:
           GITLEAKS_VERSION: 8.30.1
@@ -218,6 +222,12 @@ jobs:
           bun run --cwd "$SERVICE_PATH" format:check
           bun run --cwd "$SERVICE_PATH" typecheck
           bun run --cwd "$SERVICE_PATH" lint
+
+      - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'static' }}
+        name: React Doctor (changed against the base)
+        run: bun run --cwd "$SERVICE_PATH" --if-present doctor --base "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
 
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
         run: bun run --cwd "$SERVICE_PATH" test

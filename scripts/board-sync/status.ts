@@ -4,7 +4,7 @@ export const BOARD_STATUSES = ["Backlog", "Ready", "In progress", "In review", "
 
 export type BoardStatus = (typeof BOARD_STATUSES)[number];
 
-export const READY_LABELS = ["ready-for-agent", "ready-for-human"] as const;
+const READY_LABELS = ["ready-for-agent", "ready-for-human"] as const;
 
 export interface IssueSnapshot {
   readonly closed: boolean;

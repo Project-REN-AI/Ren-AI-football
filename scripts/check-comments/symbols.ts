@@ -2,7 +2,7 @@
 
 import type { Language } from "./lexer";
 
-export interface DocumentedSymbol {
+interface DocumentedSymbol {
   readonly exported: boolean;
   readonly lines: readonly number[];
 }

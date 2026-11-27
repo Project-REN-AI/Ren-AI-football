@@ -5,5 +5,11 @@
   "workspaces": [
     "scripts",
     "web"
-  ]
+  ],
+  "scripts": {
+    "knip": "knip"
+  },
+  "devDependencies": {
+    "knip": "6.48.0"
+  }
 }

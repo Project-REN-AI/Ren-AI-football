@@ -189,19 +189,23 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.affected.outputs.verdict).services }}
         category: [static, test]
+    env:
+      SERVICE_PATH: ${{ matrix.service.path }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
 
-      - if: ${{ matrix.service.language != 'typescript' }}
+      - if: ${{ matrix.service.language != 'typescript' && matrix.service.language != 'go' }}
         run: |
           echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
           exit 1
         env:
           LANGUAGE: ${{ matrix.service.language }}
 
-      - if: ${{ matrix.service.language == 'typescript' }}
+      - if: ${{ matrix.service.language == 'typescript' || (matrix.service.language == 'go' && matrix.category == 'static') }}
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
@@ -214,13 +218,64 @@ jobs:
           bun run --cwd "$SERVICE_PATH" format:check
           bun run --cwd "$SERVICE_PATH" typecheck
           bun run --cwd "$SERVICE_PATH" lint
-        env:
-          SERVICE_PATH: ${{ matrix.service.path }}
 
       - if: ${{ matrix.service.language == 'typescript' && matrix.category == 'test' }}
         run: bun run --cwd "$SERVICE_PATH" test
+
+      - if: ${{ matrix.service.language == 'go' }}
+        name: Install Go
         env:
-          SERVICE_PATH: ${{ matrix.service.path }}
+          GO_VERSION: 1.27.4
+          GO_SHA256: 7ecd542f86ccbbb5017de33ac529872bc48c71f4edb658d63a18d2206f482b9b
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/go.zip" \
+            "https://proxy.golang.org/golang.org/toolchain/@v/v0.0.1-go${GO_VERSION}.linux-amd64.zip"
+          echo "${GO_SHA256}  $RUNNER_TEMP/go.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/go.zip" -d "$RUNNER_TEMP/go"
+          echo "$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/gobin" >> "$GITHUB_PATH"
+          {
+            echo "GOTOOLCHAIN=local"
+            echo "GOBIN=$RUNNER_TEMP/gobin"
+          } >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.service.language == 'go' && matrix.category == 'static' }}
+        name: golangci-lint (fmt and lint)
+        working-directory: ${{ matrix.service.path }}
+        env:
+          GOLANGCI_LINT_VERSION: v2.15.0
+        run: |
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+          golangci-lint fmt --diff
+          golangci-lint run
+
+      - if: ${{ matrix.service.language == 'go' && matrix.category == 'static' }}
+        name: govulncheck (new vulnerabilities)
+        env:
+          GOVULNCHECK_VERSION: v1.10.0
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          : > "$RUNNER_TEMP/govulncheck-base.json"
+          if [ -f "$RUNNER_TEMP/base/$SERVICE_PATH/go.mod" ]; then
+            govulncheck -C "$RUNNER_TEMP/base/$SERVICE_PATH" -format json ./... > "$RUNNER_TEMP/govulncheck-base.json"
+          fi
+          govulncheck -C "$SERVICE_PATH" -format json ./... > "$RUNNER_TEMP/govulncheck-head.json"
+          bun scripts/new-vulns/main.ts --format govulncheck "$RUNNER_TEMP/govulncheck-base.json" "$RUNNER_TEMP/govulncheck-head.json"
+
+      - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' }}
+        working-directory: ${{ matrix.service.path }}
+        run: go test -p 4 ./...
+
+      - if: ${{ matrix.service.language == 'go' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: go-arch-lint (architecture)
+        working-directory: ${{ matrix.service.path }}
+        env:
+          GO_ARCH_LINT_VERSION: v1.19.2
+        run: |
+          go install "github.com/fe3dback/go-arch-lint@${GO_ARCH_LINT_VERSION}"
+          go-arch-lint check
 
   gate:
     name: gate

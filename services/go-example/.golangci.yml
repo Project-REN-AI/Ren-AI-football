@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - nolintlint
+  disable:
+    - godox
+  settings:
+    depguard:
+      rules:
+        domain:
+          files:
+            - "**/internal/domain/**"
+          list-mode: lax
+          deny:
+            - pkg: net/http
+              desc: domain must not import HTTP
+            - pkg: database/sql
+              desc: domain must not import a database driver
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Project-REN-AI/Ren-AI-football

@@ -332,7 +332,7 @@ jobs:
 
       - if: ${{ matrix.service.language == 'java' && matrix.category == 'static' }}
         working-directory: ${{ matrix.service.path }}
-        run: ./mvnw --batch-mode --no-transfer-progress spotless:check compile
+        run: ./mvnw --batch-mode --no-transfer-progress spotless:check test-compile checkstyle:check pmd:check
 
       - if: ${{ matrix.service.language == 'java' && matrix.category == 'test' }}
         working-directory: ${{ matrix.service.path }}

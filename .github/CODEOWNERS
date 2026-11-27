@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+/.github/ @Gabriel-MO-Menezes
+/docs/adr/ @Gabriel-MO-Menezes
+bun.lock @Gabriel-MO-Menezes
+uv.lock @Gabriel-MO-Menezes
+go.sum @Gabriel-MO-Menezes
+**/acceptance/ @Gabriel-MO-Menezes

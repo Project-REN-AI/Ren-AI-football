@@ -235,7 +235,7 @@ describe("pre-push CLI", () => {
   it("rejects unknown arguments", () => {
     commit("base");
 
-    const { exitCode, output } = prePush("", "--bse", "develop");
+    const { exitCode, output } = prePush("", "--verbose");
 
     expect(output).toContain("usage: pre-push");
     expect(exitCode).toBe(1);

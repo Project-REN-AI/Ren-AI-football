@@ -37,3 +37,4 @@ Regras que decorrem disso:
 - Release custa até uma hora de espera.
 - O workflow do `gate` e a detecção de afetados passam a ser código crítico, com teste próprio.
 - O cron depende da `develop` continuar sendo a branch padrão: o `schedule` só roda nela, e o GitHub desliga workflows agendados de repositório público após 60 dias sem atividade.
+- Todo `schedule` lista minutos literais de 1 a 59, nunca o minuto 0, `*`, `*/n` ou faixa: na virada da hora o GitHub atrasa e descarta execuções agendadas. O `workflow-policy` reprova o que fugir disso.

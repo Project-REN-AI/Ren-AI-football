@@ -31,7 +31,7 @@ function triggerViolations(workflow: Mapping): string[] {
   );
 }
 
-const MINUTE_OFF_THE_TURN = /^0*[1-9]$|^[1-5][0-9]$/;
+const MINUTE_PAST_THE_HOUR = /^0*[1-9]$|^[1-5][0-9]$/;
 
 function schedulesOf(on: unknown): unknown[] {
   if (!isMapping(on) || !Array.isArray(on.schedule)) return [];
@@ -42,11 +42,11 @@ function scheduleViolations(workflow: Mapping): string[] {
   return schedulesOf(workflow.on)
     .filter((cron) => {
       const minutes = typeof cron === "string" ? (cron.trim().split(/\s+/)[0] ?? "") : "";
-      return !minutes.split(",").every((minute) => MINUTE_OFF_THE_TURN.test(minute));
+      return !minutes.split(",").every((minute) => MINUTE_PAST_THE_HOUR.test(minute));
     })
     .map(
       (cron) =>
-        `schedule "${String(cron)}" must list minutes from 1 to 59; write literal minutes off the turn of the hour, where GitHub delays and drops scheduled runs`,
+        `schedule "${String(cron)}" must list minutes from 1 to 59; write literal minutes past the hour, because GitHub delays and drops scheduled runs at the top of the hour`,
     );
 }
 

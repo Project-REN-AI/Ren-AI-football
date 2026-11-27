@@ -43,7 +43,7 @@ jobs:
     name: ${{ matrix.target.name }}
     needs: [targets]
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
     environment: ci-bot
     permissions:
       contents: read
@@ -97,6 +97,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'typescript' }}
         name: static (format, typecheck, lint)
+        timeout-minutes: 10
         run: |
           c4 --check format --kind static -- "bun run --cwd $TARGET_PATH format:check"
           c4 --check typecheck --kind static -- "bun run --cwd $TARGET_PATH typecheck"
@@ -104,10 +105,12 @@ jobs:
 
       - if: ${{ matrix.target.language == 'typescript' }}
         name: React Doctor (full scope)
+        timeout-minutes: 10
         run: c4 --check react-doctor --kind static -- "bun run --cwd $TARGET_PATH --if-present doctor:full"
 
       - if: ${{ matrix.target.language == 'typescript' }}
         name: unit (isolated)
+        timeout-minutes: 10
         run: c4 --check unit --kind test -- "bun run --cwd $TARGET_PATH test --isolate"
 
       - if: ${{ matrix.target.language == 'go' }}
@@ -150,12 +153,14 @@ jobs:
 
       - if: ${{ matrix.target.language == 'go' }}
         name: static (format, lint)
+        timeout-minutes: 10
         run: |
           c4 --check format --kind static -- "cd $TARGET_PATH && golangci-lint fmt --diff"
           c4 --check lint --kind static -- "cd $TARGET_PATH && golangci-lint run"
 
       - if: ${{ matrix.target.language == 'go' }}
         name: unit, integration and architecture
+        timeout-minutes: 10
         run: |
           c4 --check unit --kind test -- "go -C $TARGET_PATH test -p 4 ./..."
           c4 --check integration --kind test -- "go -C $TARGET_PATH test -p 4 -tags integration -run Container ./cmd/..."
@@ -163,6 +168,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'go' }}
         name: govulncheck (full)
+        timeout-minutes: 10
         run: c4 --check govulncheck --kind vulnerability --fails-on 3 -- "govulncheck -C $TARGET_PATH ./..."
 
       - if: ${{ matrix.target.language == 'python' }}
@@ -183,6 +189,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'python' }}
         name: static (format, lint, typecheck)
+        timeout-minutes: 10
         run: |
           c4 --check format --kind static -- "uv run --directory $TARGET_PATH --locked ruff format --check ."
           c4 --check lint --kind static -- "uv run --directory $TARGET_PATH --locked ruff check ."
@@ -190,6 +197,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'python' }}
         name: unit, integration and architecture
+        timeout-minutes: 10
         run: |
           c4 --check unit --kind test -- "uv run --directory $TARGET_PATH --locked pytest"
           c4 --check integration --kind test -- "uv run --directory $TARGET_PATH --locked pytest -n 0 -m integration"
@@ -217,12 +225,14 @@ jobs:
 
       - if: ${{ matrix.target.language == 'java' }}
         name: static (format, compile, Checkstyle, PMD)
+        timeout-minutes: 10
         run: |
           c4 --check static --kind static -- \
             "$TARGET_PATH/mvnw -f $TARGET_PATH/pom.xml --batch-mode --no-transfer-progress spotless:check test-compile checkstyle:check pmd:check"
 
       - if: ${{ matrix.target.language == 'java' }}
         name: unit, integration and architecture
+        timeout-minutes: 20
         run: |
           mvn="$TARGET_PATH/mvnw -f $TARGET_PATH/pom.xml --batch-mode --no-transfer-progress test"
           c4 --check unit --kind test -- "$mvn -DexcludedGroups=architecture,integration"
@@ -231,6 +241,7 @@ jobs:
 
       - if: ${{ hashFiles(format('{0}/Dockerfile', matrix.target.path)) != '' }}
         name: image build
+        timeout-minutes: 10
         run: c4 --check image --kind build -- "docker build --file $TARGET_PATH/Dockerfile --tag scout-$TARGET:nightly ."
 
       - if: ${{ matrix.target.language == 'repository' }}
@@ -244,6 +255,7 @@ jobs:
           OSV_SCANNER_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8
         run: |
           bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
           curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
@@ -265,6 +277,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'repository' }}
         name: check-comments (whole repository), gitleaks (history) and hygiene
+        timeout-minutes: 10
         run: |
           c4 --check check-comments --kind comment -- "bun scripts/check-comments/main.ts --all"
           c4 --check gitleaks --kind secret -- "gitleaks git --no-banner --redact ."
@@ -274,6 +287,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'repository' }}
         name: workflows (policy, actionlint, zizmor)
+        timeout-minutes: 10
         run: |
           c4 --check workflow-policy --kind static -- "bun scripts/workflow-policy/main.ts .github/workflows"
           c4 --check actionlint --kind static -- "uvx --from actionlint-py==1.7.12.25 actionlint"
@@ -281,6 +295,7 @@ jobs:
 
       - if: ${{ matrix.target.language == 'repository' }}
         name: osv-scanner (full)
+        timeout-minutes: 10
         run: |
           c4 --check osv-scanner --kind vulnerability -- \
             "osv-scanner scan source --recursive --allow-no-lockfiles $TARGET_PATH"
@@ -294,18 +309,20 @@ jobs:
 
       - if: ${{ matrix.target.language == 'repository' }}
         name: lychee (external links, cached)
+        timeout-minutes: 10
         run: |
           c4 --check lychee --kind link --fails-on 2 -- \
-            "lychee --no-progress --cache --max-cache-age 1d --cache-exclude-status '400..=599' --accept '200..=299,429' './**/*.md'"
+            "lychee --no-progress --cache --max-cache-age 1d --cache-exclude-status '400..=599' --accept '200..=299,429' --exclude-path node_modules './**/*.md'"
 
       - id: findings
+        if: ${{ always() }}
         name: Count findings
         run: |
           count=0
           if [ -f "$RESULT" ]; then count=$(jq '.failures | length' "$RESULT"); fi
           echo "count=$count" >> "$GITHUB_OUTPUT"
 
-      - if: ${{ steps.findings.outputs.count != '0' }}
+      - if: ${{ always() && steps.findings.outputs.count != '0' }}
         id: app-token
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
         with:
@@ -315,8 +332,9 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-issues: write
 
-      - if: ${{ steps.findings.outputs.count != '0' }}
+      - if: ${{ always() && steps.findings.outputs.count != '0' }}
         name: Report findings as issues
+        timeout-minutes: 15
         run: bun scripts/failure-reporter/main.ts "$RESULT"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

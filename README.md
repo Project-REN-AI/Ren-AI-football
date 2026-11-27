@@ -20,6 +20,17 @@ Microsserviços em Java (Spring Boot), Python (FastAPI), Go e TypeScript (Next.j
 
 O escopo, os domínios e os marcos estão em [`requisitos.md`](./requisitos.md). A linguagem do domínio está em [`GLOSSARY.md`](./GLOSSARY.md). As decisões estão em [`docs/adr/`](./docs/adr/). O ambiente local, com um profile do Docker Compose por fluxo de trabalho, está em [`docs/compose.md`](./docs/compose.md).
 
+## Hooks locais
+
+Os hooks do git ficam versionados em [`.githooks/`](./.githooks/). Ative uma vez por clone, depois de `bun install`:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+- **pre-commit:** `bun fmt --staged` formata só os arquivos em stage.
+- **pre-push:** roda as checagens da C1 sobre os **Serviços Afetados**, com a mesma detecção do CI (`scripts/affected-services`), contra `origin/develop`.
+
 ## Estado
 
 Em fundação (marco M0). Ainda não há código executável.

@@ -111,7 +111,6 @@ jobs:
           export PATH="$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin:$RUNNER_TEMP/gobin:$PATH"
           export GOTOOLCHAIN=local GOBIN="$RUNNER_TEMP/gobin"
           go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
-          go -C "$TARGET_PATH" test -race -run '^$' ./...
           {
             echo "$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin"
             echo "$RUNNER_TEMP/gobin"
@@ -120,6 +119,10 @@ jobs:
             echo "GOTOOLCHAIN=local"
             echo "GOBIN=$RUNNER_TEMP/gobin"
           } >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: Build the race-enabled test binaries
+        run: go -C "$TARGET_PATH" test -race -run '^$' ./...
 
       - if: ${{ matrix.target.language == 'go' }}
         name: unit (shuffled, race detector, repeated)
@@ -155,7 +158,7 @@ jobs:
         run: |
           bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
             --check unit --kind test --repeat 3 -- \
-            "uv run --directory $TARGET_PATH --locked pytest --random-order-seed=\$SCOUT_TEST_SEED"
+            "uv run --directory $TARGET_PATH --locked pytest -n 0 --random-order-bucket=global --random-order-seed=\$SCOUT_TEST_SEED"
 
       - if: ${{ matrix.target.language == 'java' }}
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0

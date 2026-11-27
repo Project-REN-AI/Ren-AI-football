@@ -13,6 +13,7 @@ interface FailureFixture {
   kind: string;
   seed: string;
   reproduce: string;
+  failsOn?: number[];
   output?: string;
 }
 
@@ -94,6 +95,40 @@ describe("failure reporter CLI", () => {
     expect(existsSync(attempts)).toBe(false);
     expect(tracker.issues).toHaveLength(0);
     expect(output).toContain("infrastructure web unit: ignored");
+  });
+
+  it("files nothing when a rerun exits with a code outside the failure's failsOn", async () => {
+    const dir = workspace();
+    const attempts = join(dir, "attempts");
+    const run = writeRun(dir, [
+      failure({
+        check: "govulncheck",
+        kind: "vulnerability",
+        failsOn: [3],
+        reproduce: `echo x >> ${attempts}; [ "$(wc -l < ${attempts})" -ge 2 ] && exit 1; exit 3`,
+      }),
+    ]);
+    const tracker = new InMemoryIssueTracker();
+
+    const { exitCode, output } = await runFailureReporter([run], { issueTracker: tracker });
+
+    expect(exitCode).toBe(0);
+    expect(readFileSync(attempts, "utf8")).toBe("x\nx\n");
+    expect(tracker.issues).toHaveLength(0);
+    expect(output).toContain("infrastructure web govulncheck: ignored, a rerun exited 1");
+  });
+
+  it("confirms a failure whose reruns all exit with a code listed in failsOn", async () => {
+    const dir = workspace();
+    const run = writeRun(dir, [
+      failure({ check: "govulncheck", kind: "vulnerability", failsOn: [3], reproduce: "exit 3" }),
+    ]);
+    const tracker = new InMemoryIssueTracker();
+
+    const { output } = await runFailureReporter([run], { issueTracker: tracker });
+
+    expect(tracker.issues[0]?.labels).toEqual(["ci-bot", "bug", "ready-for-agent"]);
+    expect(output).toContain("confirmed web govulncheck: opened #1");
   });
 
   it("writes the failure signature marker and the fixed template in the issue body", async () => {

@@ -312,6 +312,11 @@ jobs:
         working-directory: ${{ matrix.service.path }}
         run: uv run --locked lint-imports
 
+      - if: ${{ matrix.service.language == 'python' && matrix.category == 'test' && github.event_name == 'merge_group' }}
+        name: pytest (integration, Testcontainers)
+        working-directory: ${{ matrix.service.path }}
+        run: uv run --locked pytest -n 0 -m integration
+
       - if: ${{ matrix.service.language == 'java' }}
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:

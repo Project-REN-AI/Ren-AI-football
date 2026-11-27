@@ -10,9 +10,11 @@ dev = [
   "httpx2>=2.16.2",
   "import-linter>=2.17",
   "mypy>=2.4",
+  "psycopg[binary]>=3.3.9",
   "pytest>=9.2",
   "pytest-xdist>=3.8",
   "ruff>=0.17",
+  "testcontainers[postgres]>=4.15.0",
 ]
 
 [build-system]
@@ -39,8 +41,9 @@ init_typed = true
 warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
-addopts = "-n 4"
+addopts = ["-n", "4", "--strict-markers", "-m", "not integration"]
 testpaths = ["tests"]
+markers = ["integration: needs Docker (Testcontainers)"]
 
 [tool.importlinter]
 root_packages = ["python_example"]

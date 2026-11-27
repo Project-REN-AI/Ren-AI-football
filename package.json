@@ -1,0 +1,8 @@
+{
+  "name": "scout",
+  "private": true,
+  "packageManager": "bun@1.4.5",
+  "workspaces": [
+    "scripts"
+  ]
+}

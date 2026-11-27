@@ -198,7 +198,7 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - if: ${{ matrix.service.language != 'typescript' && matrix.service.language != 'python' && matrix.service.language != 'go' }}
+      - if: ${{ !contains(fromJSON('["typescript", "python", "java", "go"]'), matrix.service.language) }}
         run: |
           echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
           exit 1
@@ -301,6 +301,27 @@ jobs:
       - if: ${{ matrix.service.language == 'python' && matrix.category == 'test' && github.event_name == 'merge_group' }}
         working-directory: ${{ matrix.service.path }}
         run: uv run --locked lint-imports
+
+      - if: ${{ matrix.service.language == 'java' }}
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - if: ${{ matrix.service.language == 'java' && matrix.category == 'static' }}
+        working-directory: ${{ matrix.service.path }}
+        run: ./mvnw --batch-mode --no-transfer-progress spotless:check compile
+
+      - if: ${{ matrix.service.language == 'java' && matrix.category == 'test' }}
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          if [ "$EVENT_NAME" = merge_group ]; then
+            ./mvnw --batch-mode --no-transfer-progress test
+          else
+            ./mvnw --batch-mode --no-transfer-progress test -DexcludedGroups=architecture
+          fi
+        env:
+          EVENT_NAME: ${{ github.event_name }}
 
   gate:
     name: gate

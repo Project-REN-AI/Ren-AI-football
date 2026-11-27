@@ -218,6 +218,12 @@ Cada script é um módulo com uma entrada pública de linha de comando: recebe a
 - Labels novas: `ci-bot`, `bug`, `flaky`.
 - Renovate como app hospedado, agrupado por ecossistema, semanal, sem automerge; Bun fixado só por PR.
 
+### Board do projeto
+
+- Board Kanban da organização com as colunas Backlog, Ready, In progress, In review e Done, mantido pelo workflow `board-sync` (ADR-0005): fechada → Done; PR aberto que a fecha → In review; atribuída → In progress; label pronta e sem bloqueador aberto → Ready; o resto → Backlog.
+- Roda em eventos de issue e por cron de 15 min, com o token do `scout-ci-bot`; precisa da variável com o número do projeto.
+- Entrou antes do workspace `scripts/` (#2), com testes em `bun:test`; o #2 o traz para o workspace e para o Vitest.
+
 ### Documentação
 
 - Seção "Comentários no código" no `CLAUDE.md` (já escrita).

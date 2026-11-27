@@ -1,0 +1,233 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+name: hunt
+
+on:
+  schedule:
+    - cron: "44 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: hunt
+  cancel-in-progress: false
+
+jobs:
+  targets:
+    name: targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - id: targets
+        run: |
+          targets=$(bun scripts/affected-services/main.ts --json --all HEAD | jq -c '.services + [
+            {name: "scripts", path: "scripts", language: "typescript"},
+            {name: "repository", path: ".", language: "repository"}
+          ]')
+          echo "$targets"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  hunt:
+    name: ${{ matrix.target.name }}
+    needs: [targets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ci-bot
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.targets) }}
+    env:
+      TARGET: ${{ matrix.target.name }}
+      TARGET_PATH: ${{ matrix.target.path }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - if: ${{ !contains(fromJSON('["typescript", "python", "java", "go", "repository"]'), matrix.target.language) }}
+        run: |
+          echo "no hunt path for $LANGUAGE yet; add its steps to hunt.yml"
+          exit 1
+        env:
+          LANGUAGE: ${{ matrix.target.language }}
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+
+      - run: echo "RESULT=$RUNNER_TEMP/run-result.json" >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.target.language == 'typescript' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - if: ${{ matrix.target.language == 'typescript' }}
+        run: bun install --frozen-lockfile
+
+      - if: ${{ matrix.target.language == 'typescript' }}
+        name: unit (shuffled, repeated)
+        run: |
+          bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
+            --check unit --kind test --repeat 3 -- \
+            "bun run --cwd $TARGET_PATH test --sequence.shuffle --sequence.seed=\$SCOUT_TEST_SEED"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: Install Go and govulncheck
+        env:
+          GO_VERSION: 1.27.4
+          GO_SHA256: 7ecd542f86ccbbb5017de33ac529872bc48c71f4edb658d63a18d2206f482b9b
+          GOVULNCHECK_VERSION: v1.10.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/go.zip" \
+            "https://proxy.golang.org/golang.org/toolchain/@v/v0.0.1-go${GO_VERSION}.linux-amd64.zip"
+          echo "${GO_SHA256}  $RUNNER_TEMP/go.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/go.zip" -d "$RUNNER_TEMP/go"
+          export PATH="$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin:$RUNNER_TEMP/gobin:$PATH"
+          export GOTOOLCHAIN=local GOBIN="$RUNNER_TEMP/gobin"
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          {
+            echo "$RUNNER_TEMP/go/golang.org/toolchain@v0.0.1-go${GO_VERSION}.linux-amd64/bin"
+            echo "$RUNNER_TEMP/gobin"
+          } >> "$GITHUB_PATH"
+          {
+            echo "GOTOOLCHAIN=local"
+            echo "GOBIN=$RUNNER_TEMP/gobin"
+          } >> "$GITHUB_ENV"
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: Build the race-enabled test binaries
+        run: go -C "$TARGET_PATH" test -race -run '^$' ./...
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: unit (shuffled, race detector, repeated)
+        run: |
+          bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
+            --check unit-race --kind test --repeat 3 -- \
+            "go -C $TARGET_PATH test -race -shuffle=\$SCOUT_TEST_SEED -count=10 ./..."
+
+      - if: ${{ matrix.target.language == 'go' }}
+        name: govulncheck (full)
+        run: |
+          bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
+            --check govulncheck --kind vulnerability --fails-on 3 -- "govulncheck -C $TARGET_PATH ./..."
+
+      - if: ${{ matrix.target.language == 'python' }}
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.11.32"
+          enable-cache: false
+          cache-local-path: ${{ runner.temp }}/uv-cache
+
+      - if: ${{ matrix.target.language == 'python' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-${{ runner.os }}-${{ hashFiles('**/uv.lock') }}
+
+      - if: ${{ matrix.target.language == 'python' }}
+        run: uv sync --directory "$TARGET_PATH" --locked
+
+      - if: ${{ matrix.target.language == 'python' }}
+        name: unit (shuffled, repeated)
+        run: |
+          bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
+            --check unit --kind test --repeat 3 -- \
+            "uv run --directory $TARGET_PATH --locked pytest -n 0 --random-order-bucket=global --random-order-seed=\$SCOUT_TEST_SEED"
+
+      - if: ${{ matrix.target.language == 'java' }}
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - if: ${{ matrix.target.language == 'java' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.m2/wrapper
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/.mvn/wrapper/maven-wrapper.properties') }}
+
+      - if: ${{ matrix.target.language == 'java' }}
+        name: Resolve Maven dependencies and test plugins
+        run: |
+          "$TARGET_PATH/mvnw" -f "$TARGET_PATH/pom.xml" --batch-mode --no-transfer-progress test \
+            -Dtest=NoTestSelected -Dsurefire.failIfNoSpecifiedTests=false
+
+      - if: ${{ matrix.target.language == 'java' }}
+        name: unit (shuffled, repeated)
+        run: |
+          bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
+            --check unit --kind test --repeat 2 -- \
+            "$TARGET_PATH/mvnw -f $TARGET_PATH/pom.xml --batch-mode --no-transfer-progress test -DexcludedGroups=architecture,integration '-Djunit.jupiter.testclass.order.default=org.junit.jupiter.api.ClassOrderer\$Random' '-Djunit.jupiter.testmethod.order.default=org.junit.jupiter.api.MethodOrderer\$Random' -Djunit.jupiter.execution.order.random.seed=\$SCOUT_TEST_SEED -Dsurefire.runOrder=random -Dsurefire.runOrder.random.seed=\$SCOUT_TEST_SEED"
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: Install osv-scanner
+        env:
+          OSV_SCANNER_VERSION: 2.7.1
+          OSV_SCANNER_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8
+        run: |
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          curl -fsSL -o "$bin/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $bin/osv-scanner" | sha256sum -c -
+          chmod +x "$bin/osv-scanner"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - if: ${{ matrix.target.language == 'repository' }}
+        name: osv-scanner (full)
+        run: |
+          bun scripts/hunt/main.ts --result "$RESULT" --layer C3 --sha "$GITHUB_SHA" --run-url "$RUN_URL" --service "$TARGET" \
+            --check osv-scanner --kind vulnerability -- \
+            "osv-scanner scan source --recursive --allow-no-lockfiles $TARGET_PATH"
+
+      - id: findings
+        name: Count findings
+        run: |
+          count=0
+          if [ -f "$RESULT" ]; then count=$(jq '.failures | length' "$RESULT"); fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - if: ${{ steps.findings.outputs.count != '0' }}
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.CI_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.CI_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: write
+
+      - if: ${{ steps.findings.outputs.count != '0' }}
+        name: Report findings as issues
+        run: bun scripts/failure-reporter/main.ts "$RESULT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}

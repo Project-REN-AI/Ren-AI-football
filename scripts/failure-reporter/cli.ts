@@ -1,9 +1,18 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { type FailureSignature, type IssueTracker, signatureMarker, type TrackedIssue } from "./issue-tracker";
+import { readFileSync, writeFileSync } from "node:fs";
+import { parseArgs } from "node:util";
+import {
+  describeFiling,
+  type FailureSignature,
+  failureSignatureOf,
+  type FiledIssue,
+  fileBySignature,
+  type IssueTracker,
+  signatureMarker,
+  type TrackedIssue,
+} from "./issue-tracker";
 import { type Failure, INFRASTRUCTURE, parseRunResult, type RunResult, SEED_VARIABLE } from "./run-result";
 
 const MAX_RERUNS = 3;
@@ -42,10 +51,6 @@ export interface FailureReporterPorts {
 export interface FailureReporterResult {
   readonly exitCode: 0 | 1;
   readonly output: string;
-}
-
-function failureSignatureOf({ service, check, kind }: Failure): FailureSignature {
-  return createHash("sha256").update([service, check, kind].join("\n")).digest("hex").slice(0, 16) as FailureSignature;
 }
 
 const RERUN_OUTPUT_BUFFER_BYTES = 64 * 1024 * 1024;
@@ -141,39 +146,51 @@ function occurrenceComment(occurrence: Occurrence): string {
   return [`## Nova ocorrência: ${heading}`, "", ...occurrenceDetails(occurrence)].join("\n");
 }
 
-async function file(issueTracker: IssueTracker, occurrence: Occurrence): Promise<string> {
+function file(issueTracker: IssueTracker, occurrence: Occurrence): Promise<FiledIssue> {
   const { failure, classification } = occurrence;
-  const signature = failureSignatureOf(failure);
-  const latest = await issueTracker.findLatestBySignature(signature);
-  if (latest?.state === "open") {
-    await issueTracker.comment(latest.number, occurrenceComment(occurrence));
-    return `commented on #${latest.number}`;
-  }
-  const issue = await issueTracker.createIssue({
-    title: `ci: ${failure.service} ${failure.check} falhou`,
-    body: issueBody(occurrence, signature, latest),
-    labels: CLASSIFICATIONS[classification].labels,
+  const signature = failureSignatureOf(failure.service, failure.check, failure.kind);
+  return fileBySignature(issueTracker, signature, {
+    comment: occurrenceComment(occurrence),
+    newIssue: (closed) => ({
+      title: `ci: ${failure.service} ${failure.check} falhou`,
+      body: issueBody(occurrence, signature, closed),
+      labels: CLASSIFICATIONS[classification].labels,
+    }),
   });
-  return `opened #${issue.number}`;
+}
+
+const USAGE = "usage: failure-reporter <run-result.json> [--new-confirmed <run-result.json>]";
+
+function parseOptions(argv: readonly string[]): { readonly path: string; readonly newConfirmed: string | undefined } {
+  const { values, positionals } = parseArgs({
+    args: [...argv],
+    options: { "new-confirmed": { type: "string" } },
+    allowPositionals: true,
+  });
+  const [path] = positionals;
+  if (path === undefined || positionals.length > 1) throw new Error(USAGE);
+  return { path, newConfirmed: values["new-confirmed"] };
 }
 
 /**
  * Reruns each failure of a C3/C4 run result file and files every ConfirmedFailure and FlakyTest through the
- * IssueTracker; infrastructure failures are ignored. Exits 1 only when the run result is missing or malformed.
+ * IssueTracker; infrastructure failures are ignored. With --new-confirmed, also writes a run result holding only the
+ * ConfirmedFailures that opened a new issue. Exits 1 only on bad arguments or a missing or malformed run result.
  */
 export async function runFailureReporter(
   argv: readonly string[],
   { issueTracker }: FailureReporterPorts,
 ): Promise<FailureReporterResult> {
-  const [path] = argv;
-  if (path === undefined) return { exitCode: 1, output: "usage: failure-reporter <run-result.json>" };
+  let options: ReturnType<typeof parseOptions>;
   let run: RunResult;
   try {
-    run = parseRunResult(readFileSync(path, "utf8"));
+    options = parseOptions(argv);
+    run = parseRunResult(readFileSync(options.path, "utf8"));
   } catch (error) {
     return { exitCode: 1, output: `failure-reporter: ${error instanceof Error ? error.message : String(error)}` };
   }
   const lines: string[] = [];
+  const newConfirmed: Failure[] = [];
   for (const failure of run.failures) {
     const subject = `${failure.service} ${failure.check}`;
     if (failure.kind === INFRASTRUCTURE) {
@@ -185,8 +202,12 @@ export async function runFailureReporter(
       lines.push(`${INFRASTRUCTURE} ${subject}: ignored, a rerun exited ${occurrence.exit}`);
       continue;
     }
-    const outcome = await file(issueTracker, occurrence);
-    lines.push(`${CLASSIFICATIONS[occurrence.classification].logWord} ${subject}: ${outcome}`);
+    const filed = await file(issueTracker, occurrence);
+    if (filed.opened && occurrence.classification === "ConfirmedFailure") newConfirmed.push(failure);
+    lines.push(`${CLASSIFICATIONS[occurrence.classification].logWord} ${subject}: ${describeFiling(filed)}`);
+  }
+  if (options.newConfirmed !== undefined) {
+    writeFileSync(options.newConfirmed, JSON.stringify({ ...run, failures: newConfirmed }));
   }
   return { exitCode: 0, output: lines.join("\n") };
 }

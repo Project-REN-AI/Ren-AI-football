@@ -21,12 +21,16 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       targets: ${{ steps.targets.outputs.targets }}
+      day-base: ${{ steps.day-base.outputs.base }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -40,6 +44,19 @@ jobs:
           ]')
           echo "$targets"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+      - id: day-base
+        if: ${{ github.ref == 'refs/heads/develop' }}
+        name: Find the commit of the last successful nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          base=$(gh api "repos/$REPOSITORY/actions/workflows/nightly.yml/runs?branch=develop&event=schedule&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty')
+          if [ -n "$base" ] && ! git merge-base --is-ancestor "$base" HEAD; then base=""; fi
+          echo "commits since the last successful nightly: ${base:-unknown, the skip cross-check will not run}..HEAD"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
 
   nightly:
     name: ${{ matrix.target.name }}
@@ -56,6 +73,7 @@ jobs:
     env:
       TARGET: ${{ matrix.target.name }}
       TARGET_PATH: ${{ matrix.target.path }}
+      DAY_BASE: ${{ needs.targets.outputs.day-base }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -341,9 +359,18 @@ jobs:
           permission-issues: write
 
       - if: ${{ always() && github.event_name != 'pull_request' && steps.findings.outputs.count != '0' }}
+        id: report
         name: Report findings as issues
         timeout-minutes: 15
-        run: bun scripts/failure-reporter/main.ts "$RESULT"
+        run: bun scripts/failure-reporter/main.ts "$RESULT" --new-confirmed "$RUNNER_TEMP/new-confirmed.json"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+
+      - if: ${{ always() && steps.report.outcome == 'success' && env.DAY_BASE != '' }}
+        name: Cross-check new confirmed failures against the affected services since the last nightly
+        timeout-minutes: 5
+        run: bun scripts/skip-cross-check/main.ts --base "$DAY_BASE" --target HEAD "$RUNNER_TEMP/new-confirmed.json"
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPOSITORY: ${{ github.repository }}

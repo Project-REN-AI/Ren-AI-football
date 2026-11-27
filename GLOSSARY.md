@@ -112,6 +112,11 @@ _Código_: `FlakyTest`
 _Avoid_: Teste quebrado, teste aleatório
 
 **Assinatura de Falha**:
-Identidade estável de uma **Falha Confirmada** ou de um **Teste Instável**: o serviço, o teste ou a checagem, e o tipo da falha. Duas ocorrências com a mesma assinatura são a mesma falha.
+Identidade estável de uma **Falha Confirmada** ou de um **Teste Instável**: o serviço, o teste ou a checagem, e o tipo da falha. Duas ocorrências com a mesma assinatura são a mesma falha. Um **Serviço Pulado** tem assinatura própria, só do serviço.
 _Código_: `FailureSignature`
 _Avoid_: Hash do erro, fingerprint
+
+**Serviço Pulado**:
+Serviço com **Falha Confirmada** nova na suíte noturna que nenhum commit desde a noite anterior tornou **Serviço Afetado**: a C2 o pulou, e a falha aponta bug na detecção.
+_Código_: `SkippedService`
+_Avoid_: Serviço esquecido, falso negativo

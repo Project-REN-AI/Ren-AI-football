@@ -13,6 +13,14 @@ Quando a C3 ou a C4 (ver [ADR-0002](0002-ci-em-quatro-camadas.md)) acham uma fal
 - **O corpo é dado não confiável** (restrição C04): o log pode conter texto controlado por terceiros, e quem consome a issue não segue instrução de dentro dele.
 - **Permissão mínima:** o App tem `issues: write` neste repositório e `organization projects: write` para mover os cards do board (ver abaixo); nada além disso. A chave privada vive num environment `ci-bot` restrito à `develop`, e nenhum workflow é disparado por comentário (`issue_comment`), `pull_request_target` ou `workflow_run`.
 
+## A C4 abre issue de bug da detecção para o Serviço Pulado
+
+A checagem cruzada da C4 (ver [ADR-0002](0002-ci-em-quatro-camadas.md)) compara as **Falhas Confirmadas** novas da noite, as que abriram issue em vez de comentar numa aberta, com a união dos **Serviços Afetados** de cada commit desde o último noturno com sucesso, calculados commit a commit como a C2 os calcula por PR. Um **Serviço Pulado** vira issue do mesmo App:
+
+- **Formato:** título `ci: detecção de Serviços Afetados pulou <serviço>`; seções com a assinatura, o intervalo de commits, os Serviços Afetados e as Falhas Confirmadas do serviço. A assinatura é só do serviço: um serviço pulado é um bug, qualquer que seja a checagem que falhou.
+- **Labels:** `ci-bot` + `bug`, estado `needs-triage`, não `ready-for-agent`. A falha nova pode vir de um commit que a C2 pulou, que é o bug, ou de algo que nenhum commit causou (relógio, dado externo, ferramenta atualizada); só uma pessoa separa os dois antes de mandar o loop mexer na lógica de pular. Falhas de tipo `vulnerability` e `link` nem entram, porque nascem fora do repositório.
+- **Deduplicação** igual à da Falha Confirmada: issue aberta recebe comentário; fechada, issue nova citando a antiga.
+
 ## O mesmo App move os cards do board
 
 O board Kanban do projeto (Backlog, Ready, In progress, In review, Done) é mantido por um workflow que recalcula o Status de cada issue a partir do estado dela: fechada → Done; com PR aberto que a fecha → In review; atribuída → In progress; com label `ready-for-agent` ou `ready-for-human` e sem bloqueador aberto → Ready; o resto → Backlog. O `/implement` se atribui a issue no primeiro passo, então ela vai para In progress sem que a skill precise falar com o board, o que ela nem conseguiria em sessão na nuvem, onde a API de Projects é bloqueada.

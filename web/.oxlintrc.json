@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "vitest", "react", "nextjs", "jsx-a11y"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "no-warning-comments": "off",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/switch-exhaustiveness-check": "error"
+  },
+  "ignorePatterns": ["node_modules", ".next", "next-env.d.ts"]
+}

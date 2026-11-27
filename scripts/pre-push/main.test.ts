@@ -10,6 +10,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const CLI = fileURLToPath(new URL("./main.ts", import.meta.url));
 const ZERO = "0000000000000000000000000000000000000000";
 
+const WORKFLOW = `name: ci
+on: pull_request
+permissions: {}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - run: "true"
+`;
+
 let repo: string;
 
 function git(...args: string[]): string {
@@ -53,6 +65,8 @@ beforeEach(() => {
   git("config", "user.name", "fixture");
   git("config", "commit.gpgsign", "false");
   write("package.json", "{}\n");
+  write("compose.yaml", "services: {}\n");
+  write(".github/workflows/ci.yml", WORKFLOW);
   write("scripts/package.json", stubScripts("scripts"));
   write("web/service.json", JSON.stringify({ language: "typescript", dependsOn: [] }));
   write("web/package.json", stubScripts("web"));
@@ -75,6 +89,8 @@ describe("pre-push CLI", () => {
 
     expect(output).toContain("ran scripts format:check");
     expect(output).toContain("ran scripts test");
+    expect(output).toContain("workflow policy: ok");
+    expect(output).toContain("compose budget: ok");
     for (const check of ["format:check", "typecheck", "lint", "test"]) expect(output).toContain(`ran web ${check}`);
     expect(output).toContain("affected services: web");
     expect(output).not.toContain("python");
@@ -112,7 +128,7 @@ describe("pre-push CLI", () => {
 
     const { exitCode, output } = prePush(pushLine(target), "--base", base);
 
-    expect(output).toContain("affected services: all");
+    expect(output).toContain("affected services: scouting, web");
     expect(output).toContain("ran web test");
     expect(output).toContain("no CI path for python services yet");
     expect(exitCode).toBe(1);
@@ -127,7 +143,7 @@ describe("pre-push CLI", () => {
 
     expect(exitCode).toBe(1);
     expect(output).toContain("web/app.ts:1");
-    expect(output).toContain("pre-push failed: check-comments");
+    expect(output).toMatch(/pre-push failed: bun \S+check-comments\/main\.ts --base/);
   });
 
   it("does nothing when the push only deletes a branch", () => {
@@ -146,5 +162,50 @@ describe("pre-push CLI", () => {
 
     expect(output).not.toContain("ran ");
     expect(exitCode).toBe(0);
+  });
+  it("diffs against develop on the remote git pushes to when no base is given", () => {
+    const base = commit("base");
+    git("update-ref", "refs/remotes/upstream/develop", base);
+    write("web/app.ts", "export const x = 2;\n");
+    const target = commit("change web");
+
+    const { exitCode, output } = prePush(pushLine(target), "upstream", "git@example.com:scout.git");
+
+    expect(output).toContain("affected services: web");
+    expect(exitCode).toBe(0);
+  });
+
+  it("runs the target-independent checks once when several branches are pushed", () => {
+    const base = commit("base");
+    write("web/app.ts", "export const x = 2;\n");
+    const first = commit("change web");
+    write("web/app.ts", "export const x = 3;\n");
+    const second = commit("change web again");
+
+    const { exitCode, output } = prePush(pushLine(first) + pushLine(second), "--base", base);
+
+    expect(output.match(/^ran scripts test$/gm)).toHaveLength(1);
+    expect(output.match(/^ran web test$/gm)).toHaveLength(1);
+    expect(exitCode).toBe(0);
+  });
+
+  it("ignores pushed tags", () => {
+    const base = commit("base");
+    write("services/scouting/app.py", "x = 2\n");
+    const target = commit("change scouting");
+
+    const { exitCode, output } = prePush(`refs/tags/v0.1.0 ${target} refs/tags/v0.1.0 ${ZERO}\n`, "--base", base);
+
+    expect(output).not.toContain("ran ");
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects unknown arguments", () => {
+    commit("base");
+
+    const { exitCode, output } = prePush("", "--bse", "develop");
+
+    expect(output).toContain("usage: pre-push");
+    expect(exitCode).toBe(1);
   });
 });

@@ -196,7 +196,7 @@ jobs:
 
       - if: ${{ matrix.service.language != 'typescript' }}
         run: |
-          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml"
+          echo "no CI path for $LANGUAGE services yet; add its steps to the service job in ci.yml and to scripts/pre-push"
           exit 1
         env:
           LANGUAGE: ${{ matrix.service.language }}

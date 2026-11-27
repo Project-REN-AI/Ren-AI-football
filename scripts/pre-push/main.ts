@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const AFFECTED_SERVICES = fileURLToPath(new URL("../affected-services/main.ts", import.meta.url));
-const CHECK_COMMENTS = fileURLToPath(new URL("../check-comments/main.ts", import.meta.url));
-const DEFAULT_BASE = "origin/develop";
-const WORKSPACE_CHECKS = ["format:check", "typecheck", "lint", "test"] as const;
+const USAGE = "usage: pre-push [<remote> [<url>]] [--base <ref>] < <git pre-push refs>";
+const INTEGRATION_BRANCH = "develop";
+const WORKSPACE_SCRIPTS = ["format:check", "typecheck", "lint", "test"] as const;
+
+function script(name: string): string {
+  return fileURLToPath(new URL(`../${name}/main.ts`, import.meta.url));
+}
 
 interface AffectedService {
   readonly name: string;
@@ -16,81 +17,89 @@ interface AffectedService {
   readonly language: string;
 }
 
-interface AffectedServices {
-  readonly all: boolean;
-  readonly services: readonly AffectedService[];
+type Check = { readonly command: readonly string[] } | { readonly unsupportedLanguage: string };
+
+function parseArgs(argv: readonly string[]): { base: string } {
+  let base: string | undefined;
+  const positional: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index] ?? "";
+    if (arg === "--base" && argv[index + 1]) base = argv[(index += 1)];
+    else if (!arg.startsWith("--") && positional.length < 2) positional.push(arg);
+    else throw new Error(USAGE);
+  }
+  return { base: base ?? `${positional[0] ?? "origin"}/${INTEGRATION_BRANCH}` };
 }
 
-interface Check {
-  readonly label: string;
-  readonly command: readonly string[];
-}
-
-function pushedTargets(stdin: string): string[] {
-  return stdin
+function pushedBranchTargets(stdin: string): string[] {
+  const targets = stdin
     .split("\n")
-    .map((line) => line.trim().split(/\s+/)[1] ?? "")
-    .filter((sha) => sha !== "" && !/^0+$/.test(sha));
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([localRef = "", sha = ""]) => localRef.startsWith("refs/heads/") && !/^0+$/.test(sha))
+    .map(([, sha = ""]) => sha);
+  return [...new Set(targets)];
 }
 
-function parseBase(args: readonly string[]): string {
-  const index = args.indexOf("--base");
-  if (index === -1) return DEFAULT_BASE;
-  const base = args[index + 1];
-  if (base === undefined || args.length !== 2) throw new Error("usage: pre-push [--base <ref>] < <git pre-push refs>");
-  return base;
+function isAffectedService(value: unknown): value is AffectedService {
+  if (typeof value !== "object" || value === null) return false;
+  const { name, path, language } = value as Record<string, unknown>;
+  return typeof name === "string" && typeof path === "string" && typeof language === "string";
 }
 
-function passes({ command }: Check): boolean {
-  const [program = "", ...args] = command;
-  console.log(`$ ${command.join(" ")}`);
-  return spawnSync(program, args, { stdio: "inherit" }).status === 0;
-}
-
-function affectedServices(base: string, target: string): AffectedServices {
-  const result = spawnSync("bun", [AFFECTED_SERVICES, "--json", base, target], { encoding: "utf8" });
-  if (result.status !== 0) throw new Error(`pre-push failed: affected-services\n${result.stderr}`);
-  spawnSync("bun", [AFFECTED_SERVICES, base, target], { stdio: "inherit" });
-  return JSON.parse(result.stdout) as AffectedServices;
+function affectedServices(base: string, target: string): AffectedService[] {
+  const result = spawnSync("bun", [script("affected-services"), "--json", base, target], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`affected-services ${base} ${target} failed:\n${result.stderr}`);
+  const parsed: unknown = JSON.parse(result.stdout);
+  const services = typeof parsed === "object" && parsed !== null && "services" in parsed ? parsed.services : undefined;
+  if (!Array.isArray(services) || !services.every(isAffectedService)) {
+    throw new Error(`affected-services printed an unexpected verdict: ${result.stdout}`);
+  }
+  return services;
 }
 
 function workspaceChecks(path: string): Check[] {
-  return WORKSPACE_CHECKS.map((script) => {
-    const command = ["bun", "run", "--cwd", path, script];
-    return { label: command.join(" "), command };
-  });
+  return WORKSPACE_SCRIPTS.map((name) => ({ command: ["bun", "run", "--cwd", path, name] }));
 }
 
 function serviceChecks({ path, language }: AffectedService): Check[] {
-  if (language === "typescript") return workspaceChecks(path);
-  const message = `no CI path for ${language} services yet; add its steps to the service job in ci.yml`;
-  return [{ label: message, command: ["sh", "-c", `echo "${message}" >&2; exit 1`] }];
+  return language === "typescript" ? workspaceChecks(path) : [{ unsupportedLanguage: language }];
 }
 
-function checksFor(base: string, target: string, services: readonly AffectedService[]): Check[] {
+function describeCheck(check: Check): string {
+  return "command" in check ? check.command.join(" ") : `no CI path for ${check.unsupportedLanguage} services yet`;
+}
+
+function passes(check: Check): boolean {
+  if (!("command" in check)) {
+    console.error(`${describeCheck(check)}; add its steps to the service job in ci.yml and to scripts/pre-push`);
+    return false;
+  }
+  const [program = "", ...args] = check.command;
+  console.log(`$ ${describeCheck(check)}`);
+  return spawnSync(program, args, { stdio: "inherit" }).status === 0;
+}
+
+function checksFor(base: string, targets: readonly string[]): Check[] {
+  const services = new Map<string, AffectedService>();
+  for (const target of targets) {
+    for (const service of affectedServices(base, target)) services.set(service.path, service);
+  }
+  const names = [...services.values()].map(({ name }) => name).toSorted();
+  console.log(`affected services: ${names.length === 0 ? "none" : names.join(", ")}`);
   return [
-    ...(existsSync(join("scripts", "package.json")) ? workspaceChecks("scripts") : []),
-    {
-      label: "check-comments",
-      command: ["bun", CHECK_COMMENTS, "--base", base, "--head", target],
-    },
-    ...services.flatMap(serviceChecks),
+    ...workspaceChecks("scripts"),
+    { command: ["bun", script("workflow-policy"), ".github/workflows"] },
+    { command: ["bun", script("compose-budget"), "."] },
+    ...targets.map((target) => ({ command: ["bun", script("check-comments"), "--base", base, "--head", target] })),
+    ...[...services.values()].toSorted((left, right) => left.name.localeCompare(right.name)).flatMap(serviceChecks),
   ];
 }
 
-async function failedChecks(): Promise<string[]> {
-  const base = parseBase(process.argv.slice(2));
-  const failed: string[] = [];
-  for (const target of new Set(pushedTargets(await Bun.stdin.text()))) {
-    const { services } = affectedServices(base, target);
-    for (const check of checksFor(base, target, services)) if (!passes(check)) failed.push(check.label);
-  }
-  return failed;
-}
-
 try {
-  const failed = await failedChecks();
-  for (const label of failed) console.error(`pre-push failed: ${label}`);
+  const { base } = parseArgs(process.argv.slice(2));
+  const targets = pushedBranchTargets(await Bun.stdin.text());
+  const failed = targets.length === 0 ? [] : checksFor(base, targets).filter((check) => !passes(check));
+  for (const check of failed) console.error(`pre-push failed: ${describeCheck(check)}`);
   if (failed.length > 0) process.exit(1);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

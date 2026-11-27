@@ -4,3 +4,7 @@ rules:
     config:
       policies:
         "*": hash-pin
+  dependabot-cooldown:
+    # See docs/adr/0007-dependabot-no-lugar-do-renovate.md
+    config:
+      days: 3

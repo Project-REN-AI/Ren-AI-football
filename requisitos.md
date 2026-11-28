@@ -8,8 +8,8 @@ doc_id: ren-ai-football-requisitos
 title: "Catálogo de Requisitos — Scout (Ren AI Football)"
 doc_type: requirements_catalog
 purpose: "Fonte de verdade sobre escopo, domínios e marcos. Insumo do grilling, das specs e dos tickets."
-version: "0.1"
-date: 2026-11-27
+version: "0.2"
+date: 2026-11-28
 status: draft
 language: pt-BR
 owner: "Gabriel Menezes"
@@ -29,6 +29,8 @@ constraints:
     text: "Dados de partida vêm de fontes abertas (StatsBomb Open Data) e de APIs com plano gratuito, respeitando os termos de uso de cada uma."
   - id: C04
     text: "Toda resposta de LLM é dado não confiável: validada antes de usar, nunca executada."
+  - id: C05
+    text: "O Scout é vitrine de padrões de sistemas distribuídos: cada padrão do mapa em 'Padrões de resiliência e concorrência' tem ao menos um uso real num domínio, justificado pela necessidade do domínio e registrado em ADR."
 
 scope:
   milestones:
@@ -83,6 +85,25 @@ O critério de ordem é o mesmo em todo o projeto: **o que impõe disciplina sob
 
 Ao fim do M2 o Scout é apresentável como portfólio. O M3 aprofunda.
 
+## Padrões de resiliência e concorrência
+
+A restrição C05 pede que o Scout exercite estes padrões. Cada um tem casa num domínio, onde a necessidade é real; o grilling do domínio decide o desenho e registra a decisão em ADR.
+
+| Padrão | Necessidade | Domínio |
+|---|---|---|
+| Consumidor idempotente | Kafka entrega *at-least-once*; o mesmo evento não pode contar duas vezes no placar | §6 |
+| Outbox | Gravar no banco e publicar evento sem perder nem duplicar | §5, §9 |
+| Retry com backoff exponencial e DLQ | API externa instável e evento malformado não podem travar a partição | §4, §6 |
+| Circuit breaker | API de futebol e provedores de LLM fora do ar não podem derrubar o Scout | §4, §10 |
+| Rate limit (token bucket em Redis + Lua) | Cota gratuita da API externa e dos provedores de LLM (C01) | §4, §10 |
+| Lock pessimista distribuído (Redis + Lua) | A sincronização do catálogo não pode rodar duas vezes em paralelo | §4 |
+| Lock pessimista no banco (`SELECT … FOR UPDATE SKIP LOCKED`) | Vários workers disputam os lotes de ingestão; cada lote é processado por um só | §5 |
+| Lock otimista (versão no registro) | Dois analistas editam o mesmo relatório de observação | §12 |
+| Cache-aside com invalidação por evento | Leitura do catálogo e da estatística de temporada é muito mais frequente que escrita | §4, §11 |
+| Saga com compensação | O relatório atravessa vários serviços e não tem transação distribuída | §12 |
+
+A ordem segue a do projeto: **idempotência antes de concorrência**. Primeiro a mesma mensagem duas vezes não causa dano (§5, §6); depois duas operações diferentes ao mesmo tempo não se atropelam (§4, §5, §12). Os testes de resiliência do §14 exercitam cada padrão sob falha injetada.
+
 ## §1 Fundação e CI
 
 Monorepo, ambiente local que sobe com um comando, CI em todo PR e as regras de branch.
@@ -113,6 +134,9 @@ Competições, temporadas, times, jogadores e partidas, sincronizados de uma API
 - Modelo relacional no PostgreSQL com migrações versionadas.
 - Integração com a fonte externa atrás de uma camada anticorrupção.
 - API REST documentada e as primeiras telas do front-end.
+- Chamadas à fonte externa com rate limit (token bucket em Redis + Lua), retry com backoff exponencial e circuit breaker.
+- Sincronização protegida por lock pessimista distribuído (Redis + Lua, com TTL e dono do lock), para nunca rodar em dobro.
+- Leitura do catálogo por cache-aside no Redis, invalidado pelo evento de mudança.
 
 ## §5 Ingestão de dados brutos
 
@@ -120,6 +144,8 @@ Os eventos de partida do StatsBomb Open Data guardados como vieram, versionados 
 
 - Arquivo bruto em armazenamento de objetos; documento bruto e metadados no MongoDB.
 - Ingestão idempotente e validação de schema.
+- Lotes de ingestão numa fila em tabela, disputados por vários workers com `SELECT … FOR UPDATE SKIP LOCKED`.
+- Publicação do "lote ingerido" por outbox.
 - Ligação entre o jogador da fonte e o jogador do catálogo.
 
 ## §6 Partida ao vivo
@@ -128,7 +154,8 @@ Uma partida histórica reproduzida em tempo real, do evento até a tela.
 
 - Replay dos eventos no ritmo real para o Kafka, particionado por partida.
 - Eventos gravados na Cassandra; placar derivado dos eventos, com rebobinar.
-- Consumo idempotente e tópico de mensagens mortas.
+- Consumo idempotente (chave de idempotência gravada na mesma transação do efeito) e tópico de mensagens mortas.
+- Tópicos de retry com backoff antes da DLQ, e reprocessamento da DLQ por comando.
 - Entrega ao navegador por WebSocket.
 
 ## §7 Modelo de xG
@@ -158,7 +185,8 @@ Busca textual de jogadores e "jogadores parecidos com X".
 
 Narração da partida e um assistente que responde com fontes.
 
-- Interface única de LLM, com rate limit e cadeia de fallback entre provedores (restrição C01).
+- Interface única de LLM, com rate limit (token bucket em Redis + Lua) e cadeia de fallback entre provedores (restrição C01).
+- Circuit breaker por provedor: provedor aberto sai da cadeia até se recuperar.
 - Narração a partir dos eventos, com streaming.
 - RAG sobre regras, relatórios e notícias, com citação verificável.
 - Conjunto de avaliação versionado e métricas de qualidade, custo e latência.
@@ -168,9 +196,14 @@ Narração da partida e um assistente que responde com fontes.
 
 Estatística de temporada, momentum ao vivo e redes de passe e de transferência.
 
+- Estatística de temporada servida por cache-aside, invalidada quando uma partida nova é consolidada.
+
 ## §12 Agente e integrações
 
 Um agente com ferramentas, exposto também por MCP, e as integrações de saída: workflow de relatório, e-mail, webhooks e notificações.
+
+- Relatório de observação editável por analistas, com lock otimista: edição sobre versão antiga é rejeitada com conflito (Problem Details do §2).
+- Workflow de relatório como saga com compensação: gerar com LLM, anexar xG e estilo, publicar e notificar; falha num passo desfaz os anteriores.
 
 ## §13 Segurança
 
@@ -179,6 +212,8 @@ Autenticação e autorização, gateway, gestão de segredos e a verificação c
 ## §14 Observabilidade avançada e testes de resiliência
 
 SLOs, alertas, testes de carga, caos, mutação e propriedade.
+
+- Testes de caos que provam cada padrão do mapa de resiliência: provedor fora do ar abre o circuito, worker morto libera o lock pelo TTL, mensagem duplicada não muda o placar.
 
 ## §15 Kubernetes e produção
 
